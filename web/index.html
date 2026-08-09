@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>灌汤</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23444444' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z'/%3E%3Cpath d='M9 11h6'/%3E%3Cpath d='M9 15h4'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app"></div>
+
+<template id="tpl-app">
+  <div class="app">
+    <header class="topbar">
+      <div class="topbar-left">
+        <div class="brand">
+          <span class="brand-icon"><icon name="chat_empty"></icon></span>
+          <span class="brand-name">灌汤</span>
+        </div>
+        <nav class="nav">
+          <button v-for="p in pages" :key="p.key" class="nav-item" :class="{ active: store.page === p.key }" @click="store.page = p.key">
+            <icon :name="p.icon"></icon><span>{{ p.label }}</span>
+          </button>
+        </nav>
+      </div>
+      <div class="topbar-right">
+        <button class="icon-btn" :title="store.theme === 'dark' ? '切换为亮色' : '切换为暗色'" @click="toggleTheme">
+          <icon :name="store.theme === 'dark' ? 'sun' : 'moon'"></icon>
+        </button>
+        <button class="icon-btn" :title="'左侧栏'" @click="toggleLeft">
+          <icon name="panel_left"></icon>
+        </button>
+        <button class="icon-btn" :title="'右侧栏'" @click="toggleRight">
+          <icon name="panel_right"></icon>
+        </button>
+      </div>
+    </header>
+
+    <div class="body">
+      <chat-list v-if="store.page === 'chat'" v-show="store.leftOpen" class="left-slot"></chat-list>
+      <component :is="pageComponent" class="main-slot"></component>
+      <right-role-list v-if="store.page === 'chat'" v-show="store.rightOpen" class="right-slot"></right-role-list>
+    </div>
+
+    <div v-if="store.notify.text" class="toast" :class="store.notify.kind">{{ store.notify.text }}</div>
+  </div>
+</template>
+
+<template id="tpl-chat">
+  <aside class="leftbar">
+    <div class="filter-bar">
+      <button v-for="c in filterOptions" :key="c" class="filter-chip" :class="{ active: store.filterCharacter === c }" @click="store.filterCharacter = c">
+        {{ c }}
+      </button>
+    </div>
+    <div class="session-list">
+      <div v-for="s in filteredSessions" :key="s.id" class="session-item" :class="{ active: s.id === store.currentSessionId }" @click="selectSession(s.id)">
+        <div class="session-title">{{ s.title || '新会话' }}</div>
+        <div class="session-meta">{{ s.character_name || '未指定角色' }}</div>
+        <button class="icon-btn small" title="删除会话" @click.stop="removeSession(s.id)">
+          <icon name="trash"></icon>
+        </button>
+      </div>
+      <div v-if="!filteredSessions.length" class="empty-hint">暂无会话</div>
+    </div>
+    <button class="new-session-btn" @click="newSession">
+      <icon name="plus"></icon><span>新建会话</span>
+    </button>
+  </aside>
+</template>
+
+<template id="tpl-right-roles">
+  <aside class="rightbar">
+    <div class="rightbar-title">角色</div>
+    <div class="role-list">
+      <div v-for="r in store.roles" :key="r.name" class="role-item" :class="{ active: isActiveRole(r) }" @click="pickRole(r)">
+        <role-avatar :role="r" :size="28"></role-avatar>
+        <div class="role-item-info">
+          <div class="role-item-name">{{ r.name }}</div>
+          <div class="role-item-meta">{{ r.model || '未配置模型' }}</div>
+        </div>
+      </div>
+      <div v-if="!store.roles.length" class="empty-hint">暂无角色</div>
+    </div>
+    <button class="new-session-btn" @click="store.page = 'roles'">
+      <icon name="plus"></icon><span>新建角色</span>
+    </button>
+  </aside>
+</template>
+
+<template id="tpl-roles">
+  <div class="page">
+    <div class="page-header">
+      <h2>角色</h2>
+      <button class="primary-btn" @click="openEditor(null)"><icon name="plus"></icon><span>新建角色</span></button>
+    </div>
+    <div class="card-grid">
+      <div v-for="r in store.roles" :key="r.name" class="card" @click="openEditor(r)">
+        <div class="card-head">
+          <role-avatar :role="r" :size="36"></role-avatar>
+          <div class="card-title">
+            <div>{{ r.name }}</div>
+            <div class="card-sub">{{ r.model || '未配置模型' }}</div>
+          </div>
+        </div>
+        <div class="card-tags">
+          <span v-if="r.skills && r.skills.length" class="tag">技能 {{ r.skills.length }}</span>
+          <span v-if="r.modes && r.modes.length" class="tag">模式 {{ r.modes.length }}</span>
+          <span v-if="r.thinking_mode === 'reasoner'" class="tag">深度思考</span>
+        </div>
+        <button class="icon-btn" title="删除角色" @click.stop="removeRole(r.name)">
+          <icon name="trash"></icon>
+        </button>
+      </div>
+      <div v-if="!store.roles.length" class="empty-block">还没有角色，点击右上角创建</div>
+    </div>
+
+    <modal v-if="editor" :title="editor.name ? '编辑角色' : '新建角色'" @close="editor = null">
+      <div class="form">
+        <label class="field"><span>名称</span><input v-model="editor.name" placeholder="角色名称"/></label>
+        <label class="field"><span>头像</span>
+          <div class="avatar-row">
+            <role-avatar :role="editor" :size="40"></role-avatar>
+            <input v-model="editor.avatar" placeholder="emoji 或留空"/>
+            <button class="icon-btn" title="上传图片" @click="uploadAvatar">
+              <icon name="upload"></icon>
+            </button>
+            <input type="file" ref="avatarFile" accept="image/*" style="display:none" @change="onAvatarFile"/>
+          </div>
+        </label>
+        <label class="field"><span>模型</span>
+          <select v-model="editor.model">
+            <option value="">未配置</option>
+            <option v-for="m in store.models" :key="m.name" :value="m.name">{{ m.name }}</option>
+          </select>
+        </label>
+        <label class="field"><span>思考模式</span>
+          <select v-model="editor.thinking_mode">
+            <option value="chat">普通</option>
+            <option value="reasoner">深度思考</option>
+          </select>
+        </label>
+        <label class="field"><span>思考强度</span>
+          <select v-model="editor.thinking_strength">
+            <option value="low">低</option>
+            <option value="medium">中</option>
+            <option value="high">高</option>
+          </select>
+          <em class="field-hint">强度暂只存储，当前模型 API 不支持</em>
+        </label>
+        <div class="field"><span>技能</span>
+          <div class="check-group">
+            <label v-for="s in store.skills" :key="s.name" class="check-item">
+              <input type="checkbox" :value="s.name" v-model="editor.skills"/><span>{{ s.name }}</span>
+            </label>
+            <em v-if="!store.skills.length" class="field-hint">暂无技能，可去技能页创建</em>
+          </div>
+        </div>
+        <div class="field"><span>模式</span>
+          <div class="check-group">
+            <label v-for="m in store.modes" :key="m.name" class="check-item">
+              <input type="checkbox" :value="m.name" v-model="editor.modes"/><span>{{ m.name }}</span>
+            </label>
+            <em v-if="!store.modes.length" class="field-hint">暂无模式，可去模式页创建</em>
+          </div>
+        </div>
+        <label class="field" v-if="editor.modes && editor.modes.length"><span>默认模式</span>
+          <select v-model="editor.default_mode">
+            <option value="">无</option>
+            <option v-for="m in editor.modes" :key="m" :value="m">{{ m }}</option>
+          </select>
+        </label>
+        <label class="field"><span>温度</span><input v-model.number="editor.temperature" type="number" step="0.1" min="0" max="2"/></label>
+        <label class="field"><span>最大输出</span><input v-model.number="editor.max_tokens" type="number" min="1"/></label>
+        <div class="field"><span>角色设定</span>
+          <textarea v-model="editor.setting" rows="8" placeholder="系统提示词正文，角色设定中可用 角色名、玩家名 标记"></textarea>
+          <div class="hint-row">
+            <button class="text-btn" @click="previewPrompt"><icon name="eye"></icon><span>查看生效系统提示词</span></button>
+          </div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="primary-btn" @click="saveRole"><icon name="check"></icon><span>保存</span></button>
+        <button class="ghost-btn" @click="editor = null">取消</button>
+      </div>
+    </modal>
+
+    <modal v-if="preview" title="生效系统提示词" @close="preview = null" wide>
+      <pre class="prompt-preview">{{ preview }}</pre>
+      <div class="modal-actions">
+        <button class="ghost-btn" @click="preview = null">关闭</button>
+      </div>
+    </modal>
+  </div>
+</template>
+
+<template id="tpl-skills">
+  <div class="page">
+    <div class="page-header">
+      <h2>技能</h2>
+      <button class="primary-btn" @click="openEditor(null)"><icon name="plus"></icon><span>新建技能</span></button>
+    </div>
+    <div class="card-grid">
+      <div v-for="s in store.skills" :key="s.name" class="card" @click="openEditor(s)">
+        <div class="card-head">
+          <div class="card-title">
+            <div>{{ s.name }}</div>
+            <div class="card-sub">{{ s.type === 'search' ? '联网搜索（尚未实现后端）' : s.command }}</div>
+          </div>
+          <span class="badge" :class="s.enabled ? 'ok' : 'off'">{{ s.enabled ? '启用' : '停用' }}</span>
+        </div>
+        <div class="card-tags"><span class="tag">{{ s.type }}</span></div>
+        <button class="icon-btn" title="删除技能" @click.stop="removeSkill(s.name)">
+          <icon name="trash"></icon>
+        </button>
+      </div>
+      <div v-if="!store.skills.length" class="empty-block">暂无技能</div>
+    </div>
+
+    <modal v-if="editor" :title="editor.name ? '编辑技能' : '新建技能'" @close="editor = null">
+      <div class="form">
+        <label class="field"><span>名称</span><input v-model="editor.name" placeholder="技能名称"/></label>
+        <label class="field"><span>类型</span>
+          <select v-model="editor.type">
+            <option value="mcp">MCP 服务器</option>
+            <option value="search">联网搜索</option>
+          </select>
+        </label>
+        <template v-if="editor.type === 'mcp'">
+          <label class="field"><span>启动命令</span><input v-model="editor.command" placeholder="例如 npx 或 python"/></label>
+          <label class="field"><span>参数</span><input v-model="argsText" placeholder="每行一个参数"/></label>
+        </template>
+        <label class="field"><span>状态</span>
+          <select v-model="editor.enabled">
+            <option :value="true">启用</option>
+            <option :value="false">停用</option>
+          </select>
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button class="primary-btn" @click="saveSkill"><icon name="check"></icon><span>保存</span></button>
+        <button class="ghost-btn" @click="editor = null">取消</button>
+      </div>
+    </modal>
+  </div>
+</template>
+
+<template id="tpl-modes">
+  <div class="page">
+    <div class="page-header">
+      <h2>模式</h2>
+      <button class="primary-btn" @click="openEditor(null)"><icon name="plus"></icon><span>新建模式</span></button>
+    </div>
+    <div class="card-grid">
+      <div v-for="m in store.modes" :key="m.name" class="card" @click="openEditor(m)">
+        <div class="card-head">
+          <div class="card-title">
+            <div>{{ m.name }}</div>
+            <div class="card-sub">{{ m.description || '无描述' }}</div>
+          </div>
+        </div>
+        <button class="icon-btn" title="删除模式" @click.stop="removeMode(m.name)">
+          <icon name="trash"></icon>
+        </button>
+      </div>
+      <div v-if="!store.modes.length" class="empty-block">暂无模式</div>
+    </div>
+
+    <modal v-if="editor" :title="editor.name ? '编辑模式' : '新建模式'" @close="editor = null">
+      <div class="form">
+        <label class="field"><span>名称</span><input v-model="editor.name" placeholder="模式名称"/></label>
+        <label class="field"><span>描述</span><input v-model="editor.description" placeholder="简短说明"/></label>
+        <div class="field"><span>追加提示词</span>
+          <textarea v-model="editor.content" rows="8" placeholder="追加在角色设定之后的系统提示词"></textarea>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="primary-btn" @click="saveMode"><icon name="check"></icon><span>保存</span></button>
+        <button class="ghost-btn" @click="editor = null">取消</button>
+      </div>
+    </modal>
+  </div>
+</template>
+
+<template id="tpl-models">
+  <div class="page">
+    <div class="page-header">
+      <h2>模型</h2>
+      <button class="primary-btn" @click="openEditor(null)"><icon name="plus"></icon><span>新建模型</span></button>
+    </div>
+    <div class="card-grid">
+      <div v-for="m in store.models" :key="m.name" class="card" @click="openEditor(m)">
+        <div class="card-head">
+          <div class="card-title">
+            <div>{{ m.name }}</div>
+            <div class="card-sub">{{ m.provider }} · {{ m.model }}</div>
+          </div>
+        </div>
+        <button class="icon-btn" title="删除模型" @click.stop="removeModel(m.name)">
+          <icon name="trash"></icon>
+        </button>
+      </div>
+      <div v-if="!store.models.length" class="empty-block">暂无模型</div>
+    </div>
+
+    <modal v-if="editor" :title="editor.name ? '编辑模型' : '新建模型'" @close="editor = null">
+      <div class="form">
+        <label class="field"><span>名称</span><input v-model="editor.name" placeholder="显示名称"/></label>
+        <label class="field"><span>接入类型</span>
+          <select v-model="editor.provider">
+            <option value="openai">OpenAI 标准</option>
+            <option value="mock">模拟（无网络）</option>
+          </select>
+        </label>
+        <label class="field"><span>接口地址</span><input v-model="editor.base_url" placeholder="https://api.openai.com"/></label>
+        <label class="field"><span>模型名称</span><input v-model="editor.model" placeholder="模型标识，如 gpt-4o"/></label>
+        <label class="field"><span>密钥</span>
+          <div class="key-row">
+            <input v-model="editor.api_key" :type="showKey ? 'text' : 'password'" placeholder="手动填写 API 密钥，留空则读取 .env 的 DEEPSEEK_API_KEY"/>
+            <button class="icon-btn" title="显示/隐藏密钥" @click="showKey = !showKey">
+              <icon :name="showKey ? 'eye_off' : 'eye'"></icon>
+            </button>
+          </div>
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button class="primary-btn" @click="saveModel"><icon name="check"></icon><span>保存</span></button>
+        <button class="ghost-btn" @click="editor = null">取消</button>
+      </div>
+    </modal>
+  </div>
+</template>
+
+<template id="tpl-settings">
+  <div class="page narrow">
+    <div class="page-header"><h2>设置</h2></div>
+    <div class="form card">
+      <div class="field"><span>我的名字</span>
+        <input v-model="playerName" placeholder="留空显示 Untitled"/>
+      </div>
+      <div class="field"><span>我的头像</span>
+        <div class="avatar-row">
+          <player-avatar :size="40"></player-avatar>
+          <input v-model="playerAvatar" placeholder="emoji 或留空"/>
+          <button class="icon-btn" title="上传图片" @click="uploadPlayerAvatar"><icon name="upload"></icon></button>
+          <input type="file" ref="playerAvatarFile" accept="image/*" style="display:none" @change="onPlayerAvatarFile"/>
+        </div>
+      </div>
+      <div class="field"><span>主题</span>
+        <select v-model="store.theme" @change="applyTheme(); saveUi()">
+          <option value="dark">暗色</option>
+          <option value="light">亮色</option>
+        </select>
+      </div>
+      <div class="field"><span>界面</span>
+        <div class="check-group">
+          <label class="check-item"><input type="checkbox" v-model="store.leftOpen" @change="saveUi"/><span>显示左侧栏</span></label>
+          <label class="check-item"><input type="checkbox" v-model="store.rightOpen" @change="saveUi"/><span>显示右侧栏</span></label>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="primary-btn" @click="savePlayer"><icon name="check"></icon><span>保存</span></button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<template id="tpl-modal">
+  <div class="modal-mask" @click.self="$emit('close')">
+    <div class="modal" :class="{ wide }">
+      <div class="modal-head">
+        <h3>{{ title }}</h3>
+        <button class="icon-btn" @click="$emit('close')"><icon name="x"></icon></button>
+      </div>
+      <div class="modal-body"><slot/></div>
+    </div>
+  </div>
+</template>
+
+<template id="tpl-role-avatar">
+  <span class="avatar" :style="{ width: size + 'px', height: size + 'px', fontSize: Math.round(size * 0.55) + 'px' }">
+    <img v-if="avatarUrl" :src="avatarUrl" :alt="role.name"/>
+    <span v-else>{{ role.avatar || '?' }}</span>
+  </span>
+</template>
+
+<template id="tpl-player-avatar">
+  <span class="avatar" :style="{ width: size + 'px', height: size + 'px', fontSize: Math.round(size * 0.55) + 'px' }">
+    <img v-if="player.avatar && player.avatar.startsWith('p-')" :src="'/files/data/avatar/' + player.avatar" :alt="player.name"/>
+    <span v-else>{{ player.avatar || '?' }}</span>
+  </span>
+</template>
+
+<template id="tpl-message-bubble">
+  <div class="msg" :class="msg.sender">
+    <template v-if="msg.sender === 'character'">
+      <role-avatar :role="characterFor(msg)" :size="30"></role-avatar>
+    </template>
+    <div class="msg-body">
+      <div class="msg-meta">
+        <span class="msg-name">{{ msg.sender === 'character' ? (msg.character_name || '角色') : store.player.name }}</span>
+        <span class="msg-time">{{ formatTime(msg.created_at) }}</span>
+      </div>
+      <div v-if="msg.reasoning" class="reasoning">
+        <button class="reasoning-toggle" @click="showReasoning = !showReasoning">
+          <icon name="eye"></icon><span>思考过程</span><icon name="chevron_down"></icon>
+        </button>
+        <pre v-if="showReasoning" class="reasoning-text">{{ msg.reasoning }}</pre>
+      </div>
+      <div v-if="msg.tool_events && msg.tool_events.length" class="tool-events">
+        <button class="reasoning-toggle" @click="showTools = !showTools">
+          <icon name="skill"></icon><span>工具调用 {{ msg.tool_events.length }}</span><icon name="chevron_down"></icon>
+        </button>
+        <div v-if="showTools" class="tool-list">
+          <div v-for="(t, i) in msg.tool_events" :key="i" class="tool-item">
+            <div class="tool-name"><icon name="skill"></icon><span>{{ t.name }}</span></div>
+            <pre class="tool-result">{{ t.result }}</pre>
+          </div>
+        </div>
+      </div>
+      <div v-if="msg.attachments && msg.attachments.length" class="msg-attachments">
+        <span v-for="(a, i) in msg.attachments" :key="i" class="attach-chip static">
+          <icon name="file_text"/><span class="attach-name">{{ a.name }}</span>
+        </span>
+      </div>
+      <div v-if="msg.content" class="msg-content markdown" v-html="renderMarkdown(msg.content)"></div>
+      <div v-if="streaming" class="streaming-hint">正在回复<span class="dots">…</span></div>
+    </div>
+  </div>
+</template>
+
+<template id="tpl-chat-page">
+  <div class="chat-wrap">
+    <template v-if="!store.roles.length">
+      <div class="chat-empty">
+        <icon name="alert" :size="40"></icon>
+        <p>还没有角色，无法开启会话</p>
+        <button class="primary-btn" @click="store.page = 'roles'"><span>去创建角色</span></button>
+      </div>
+    </template>
+    <template v-else-if="!store.currentSessionId">
+      <div class="chat-empty">
+        <icon name="chat_empty" :size="40"></icon>
+        <p>开启一个新会话</p>
+        <button class="primary-btn" @click="newSession"><span>新建会话</span></button>
+      </div>
+    </template>
+    <template v-else>
+      <div class="chat-head">
+        <span class="chat-role" v-if="currentRole()">
+          <role-avatar :role="currentRole()" :size="22"></role-avatar>
+          <span>{{ currentRole().name }}</span>
+        </span>
+        <select v-if="modeOptions.length" class="mode-select" :value="currentSession().mode" @change="onModeChange">
+          <option value="">无模式</option>
+          <option v-for="m in modeOptions" :key="m" :value="m">{{ m }}</option>
+        </select>
+        <button v-if="store.messages.length" class="text-btn" @click="clearSession">
+          <icon name="trash"></icon><span>清空</span>
+        </button>
+      </div>
+      <div class="chat-list" ref="chatList">
+        <message-bubble v-for="m in store.messages" :key="m.key" :msg="m" :streaming="m.streaming"></message-bubble>
+      </div>
+      <div class="chat-input-row">
+        <div class="input-left">
+          <div v-if="attachments.length" class="attach-list">
+            <span v-for="(a, i) in attachments" :key="i" class="attach-chip">
+              <icon name="file_text"/><span class="attach-name">{{ a.name }}</span>
+              <button class="icon-btn small" title="移除" @click="attachments.splice(i, 1)"><icon name="x"></icon></button>
+            </span>
+          </div>
+          <div class="input-bar">
+            <button class="icon-btn" title="添加文件" @click="fileInput.click()">
+              <icon name="paperclip"></icon>
+            </button>
+            <input type="file" ref="fileInput" multiple style="display:none" @change="onFiles"/>
+            <textarea
+              class="chat-input"
+              v-model="draft"
+              :placeholder="store.streaming ? '回复中…' : '输入消息，Enter 发送，Shift+Enter 换行'"
+              :disabled="store.streaming"
+              @keydown.enter.exact.prevent="send"
+            ></textarea>
+          </div>
+        </div>
+        <button class="primary-btn send-btn" :disabled="store.streaming || (!draft.trim() && !attachments.length)" @click="send">
+          <icon name="send"></icon>
+        </button>
+      </div>
+    </template>
+  </div>
+</template>
+
+<script src="https://unpkg.com/vue@3.4.38/dist/vue.global.prod.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="/static/icons.js"></script>
+<script src="/static/api.js"></script>
+<script src="/static/store.js"></script>
+<script src="/static/views/common.js"></script>
+<script src="/static/views/chat.js"></script>
+<script src="/static/views/roles.js"></script>
+<script src="/static/views/skills.js"></script>
+<script src="/static/views/modes.js"></script>
+<script src="/static/views/models.js"></script>
+<script src="/static/views/settings.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,117 @@
+(function () {
+  const { reactive } = Vue
+
+  const store = reactive({
+    page: 'chat',
+    theme: 'dark',
+    leftOpen: true,
+    rightOpen: true,
+    roles: [],
+    skills: [],
+    modes: [],
+    models: [],
+    sessions: [],
+    sessionCharacters: [],
+    currentSessionId: null,
+    filterCharacter: '全部',
+    messages: [],
+    player: { name: '', avatar: '' },
+    streaming: false,
+    ws: null,
+    notify: { text: '', kind: '' },
+  })
+
+  function notify(text, kind = 'error') {
+    store.notify = { text, kind }
+    setTimeout(() => { store.notify = { text: '', kind: '' } }, 4000)
+  }
+
+  async function loadState() {
+    const data = await api.get('/api/state')
+    store.roles = data.roles
+    store.skills = data.skills
+    store.modes = data.modes
+    store.models = data.models
+    store.sessions = data.sessions
+    store.sessionCharacters = data.session_characters
+    store.player = data.player
+    store.theme = data.ui.theme
+    store.leftOpen = data.ui.sidebar_left
+    store.rightOpen = data.ui.sidebar_right
+    applyTheme()
+  }
+
+  async function loadSessions() {
+    store.sessions = await api.get('/api/sessions')
+    const roles = [...new Set(store.sessions.map((s) => s.character_name).filter(Boolean))]
+    store.sessionCharacters = roles
+  }
+
+  function currentSession() {
+    return store.sessions.find((s) => s.id === store.currentSessionId) || null
+  }
+
+  function currentRole() {
+    const s = currentSession()
+    if (!s) return null
+    return store.roles.find((r) => r.name === s.character_name) || null
+  }
+
+  async function selectSession(id) {
+    store.currentSessionId = id
+    const s = currentSession()
+    if (!s) { store.messages = []; return }
+    const msgs = await api.get(`/api/sessions/${id}/messages`)
+    store.messages = msgs.map((m) => ({ ...m, key: 'h' + m.id }))
+    store.filterCharacter = '全部'
+  }
+
+  async function newSession() {
+    const role = store.roles[0]
+    if (!role) { notify('请先在角色页创建一个角色'); return }
+    const session = await api.post('/api/sessions', { character_name: role.name })
+    await loadState()
+    await selectSession(session.id)
+  }
+
+  async function switchSessionRole(roleName) {
+    const s = currentSession()
+    if (!s) return
+    const updated = await api.put(`/api/sessions/${s.id}`, { character_name: roleName })
+    const idx = store.sessions.findIndex((x) => x.id === s.id)
+    store.sessions[idx] = updated
+    store.filterCharacter = '全部'
+  }
+
+  async function switchSessionMode(modeName) {
+    const s = currentSession()
+    if (!s) return
+    const updated = await api.put(`/api/sessions/${s.id}`, { mode: modeName || '' })
+    const idx = store.sessions.findIndex((x) => x.id === s.id)
+    store.sessions[idx] = updated
+  }
+
+  function applyTheme() {
+    document.documentElement.setAttribute('data-theme', store.theme)
+  }
+
+  async function saveUi() {
+    await api.put('/api/config', {
+      ui: { theme: store.theme, sidebar_left: store.leftOpen, sidebar_right: store.rightOpen },
+    })
+  }
+
+  store.notify = notify
+  store.loadState = loadState
+  store.loadSessions = loadSessions
+  store.currentSession = currentSession
+  store.currentRole = currentRole
+  store.selectSession = selectSession
+  store.newSession = newSession
+  store.switchSessionRole = switchSessionRole
+  store.switchSessionMode = switchSessionMode
+  store.applyTheme = applyTheme
+  store.saveUi = saveUi
+
+  window.store = store
+})()
