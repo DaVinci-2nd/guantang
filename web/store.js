@@ -24,12 +24,12 @@
     autoTitle: { enabled: false, model: '', prompt: '', mode: 1, rounds: 3 },
     streaming: false,
     ws: null,
-    notify: { text: '', kind: '' },
+    toast: { text: '', kind: '' },
   })
 
   function notify(text, kind = 'error') {
-    store.notify = { text, kind }
-    setTimeout(() => { store.notify = { text: '', kind: '' } }, 4000)
+    store.toast = { text, kind }
+    setTimeout(() => { store.toast = { text: '', kind: '' } }, 4000)
   }
 
   async function loadState() {

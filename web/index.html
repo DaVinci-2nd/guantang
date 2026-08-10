@@ -43,7 +43,7 @@
       <right-role-list v-if="store.page === 'chat'" v-show="store.rightOpen" class="right-slot"></right-role-list>
     </div>
 
-    <div v-if="store.notify.text" class="toast" :class="store.notify.kind">{{ store.notify.text }}</div>
+    <div v-if="store.toast.text" class="toast" :class="store.toast.kind">{{ store.toast.text }}</div>
   </div>
 </template>
 
