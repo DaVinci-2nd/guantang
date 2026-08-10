@@ -151,7 +151,11 @@ class AppContext:
             raise HTTPException(400, "该会话绑定的角色已被删除，请先在右侧选择一个角色")
         model_def = self.models.get(role.get("model") or "")
         if not model_def:
-            raise HTTPException(400, f"角色引用的模型不存在：{role.get('model')}")
+            mock_models = [m for m in self.models.list() if m.get("provider") == "mock"]
+            if mock_models:
+                model_def = mock_models[0]
+            else:
+                raise HTTPException(400, f"角色引用的模型不存在：{role.get('model')}")
         return session, role, model_def
 
     def build_system(self, session: dict, role: dict, model_def: dict | None = None) -> str:

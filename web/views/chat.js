@@ -84,22 +84,24 @@
         return (attList || []).map((a) => ({ name: a.name, size: a.size, readable: a.readable }))
       }
 
-      async function sendContent(content, attList, sessionId) {
+      async function sendContent(content, attList, sessionId, persistPlayer = true) {
         if (store.streaming) return
         const sid = sessionId || store.currentSessionId
         if (!sid) return
-        const meta = buildAttachMeta(attList)
         store.streaming = true
-        let saved
-        try {
-          saved = await api.post(`/api/sessions/${sid}/messages`, { content, attachments: meta })
-        } catch (e) {
-          store.streaming = false
-          store.notify(e.message)
-          return
+        if (persistPlayer) {
+          const meta = buildAttachMeta(attList)
+          let saved
+          try {
+            saved = await api.post(`/api/sessions/${sid}/messages`, { content, attachments: meta })
+          } catch (e) {
+            store.streaming = false
+            store.notify(e.message)
+            return
+          }
+          saved.key = 'p' + keySeq++
+          store.messages.push(saved)
         }
-        saved.key = 'p' + keySeq++
-        store.messages.push(saved)
 
         const aiMsg = reactive({
           key: 'a' + keySeq++,
@@ -246,7 +248,7 @@
         }
         const idx = store.messages.findIndex((m) => m.key === player.key)
         store.messages = store.messages.slice(0, idx + 1)
-        await sendContent(player.content, player.attachments || [], sid)
+        await sendContent(player.content, player.attachments || [], sid, false)
       }
 
       function openEdit(msg) {
@@ -283,7 +285,7 @@
           }
           const idx = store.messages.findIndex((m) => m.key === player.key)
           store.messages = store.messages.slice(0, idx + 1)
-          await sendContent(player.content, player.attachments || [], sid)
+          await sendContent(player.content, player.attachments || [], sid, false)
         }
       }
 
