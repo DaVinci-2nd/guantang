@@ -211,7 +211,7 @@ class AppContext:
 
     async def recognize_message_images(self, msg: dict) -> str | None:
         mm = self.cfg.multimodal()
-        if not mm.get("enabled") or not mm.get("model") or not mm.get("prompt"):
+        if not mm.get("enabled"):
             return None
         images = [
             att for att in (msg.get("attachments") or [])
@@ -219,9 +219,23 @@ class AppContext:
         ]
         if not images:
             return None
-        model_def = self.models.get(mm["model"])
-        if not model_def:
-            return None
+
+        def mark_and_save(extra_text: str):
+            attachments = list(msg.get("attachments") or [])
+            for att in attachments:
+                if att.get("kind") == "image" and not att.get("recognized"):
+                    att["recognized"] = True
+            content = (msg.get("content") or "")
+            if extra_text:
+                content = content + "\n\n" + extra_text
+            self.storage.update_message(
+                msg["session_id"], msg["id"], content=content, attachments=attachments
+            )
+            return msg["id"]
+
+        model_def = self.models.get(mm["model"]) if mm.get("model") else None
+        if not model_def or not mm.get("prompt"):
+            return mark_and_save("")
         descriptions = []
         for att in images:
             url = att.get("url") or ""
@@ -234,7 +248,7 @@ class AppContext:
             b64 = base64.b64encode(path.read_bytes()).decode("ascii")
             provider = build_provider(
                 model_def,
-                self.cfg.api_key(model_def.get("api_key", "DEEPSEEK_API_KEY")),
+                (model_def.get("api_key") or self.cfg.api_key("DEEPSEEK_API_KEY")),
                 timeout=self.cfg.get("timeout", 120),
                 max_retries=self.cfg.get("max_retries", 2),
             )
@@ -257,19 +271,10 @@ class AppContext:
                 if desc:
                     descriptions.append(f"【图片：{att.get('name', '图片')}】{desc}")
             except Exception:
-                pass
+                descriptions.append(f"【图片：{att.get('name', '图片')}】（图片识别失败，无法获取描述）")
             finally:
                 await provider.close()
-        if not descriptions:
-            return None
-        attachments = list(msg.get("attachments") or [])
-        for att in attachments:
-            if att.get("kind") == "image" and not att.get("recognized"):
-                att["recognized"] = True
-        self.storage.update_message(
-            msg["session_id"], msg["id"], content=(msg.get("content") or "") + "\n\n" + "\n\n".join(descriptions), attachments=attachments
-        )
-        return msg["id"]
+        return mark_and_save("\n\n".join(descriptions))
 
     def build_session_turn_text(self, messages: list[dict], rounds: int | None = None) -> str:
         lines = []
@@ -316,7 +321,7 @@ class AppContext:
                 return
             provider = build_provider(
                 model_def,
-                self.cfg.api_key(model_def.get("api_key", "DEEPSEEK_API_KEY")),
+                (model_def.get("api_key") or self.cfg.api_key("DEEPSEEK_API_KEY")),
                 timeout=self.cfg.get("timeout", 120),
                 max_retries=self.cfg.get("max_retries", 2),
             )
