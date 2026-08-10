@@ -31,7 +31,7 @@ class MockProvider(BaseProvider):
         if tools:
             first = tools[0]
             yield ("text", "这个任务我来调用工具处理喵。")
-            yield ("tool_call", ToolCall(id="mock_1", name=first["function"]["name"], arguments={}))
+            yield ("tool_call", ToolCall(id="mock_1", name=first["function"]["name"], arguments={"query": "mock 测试搜索"}))
             yield ("done", "tool_calls")
         else:
             yield ("text", "（模拟）好的喵，任务收到，我会好好干的。")

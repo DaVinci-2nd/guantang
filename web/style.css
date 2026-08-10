@@ -334,6 +334,43 @@ body {
   overflow-y: auto;
 }
 
+.msg-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  align-self: flex-start;
+  padding-top: 2px;
+}
+
+.msg.player .msg-actions { align-self: flex-end; }
+
+.msg:hover .msg-actions { opacity: 1; }
+
+.msg-interrupted {
+  font-size: 11px;
+  color: #e67e22;
+  border: 1px solid rgba(230, 126, 34, 0.5);
+  border-radius: 999px;
+  padding: 0 8px;
+}
+
+.send-btn.abort { background: #e74c3c; }
+
+.send-btn.abort:hover { background: #c0392b; }
+
+.debug-view { display: flex; flex-direction: column; gap: 14px; }
+
+.debug-section { display: flex; flex-direction: column; gap: 6px; }
+
+.debug-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-sub);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
+}
+
 .streaming-hint { font-size: 12px; color: var(--text-sub); padding: 0 4px; }
 
 .dots { animation: blink 1.2s infinite; }

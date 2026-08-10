@@ -72,6 +72,7 @@
   const MessageBubble = {
     template: document.getElementById('tpl-message-bubble').innerHTML,
     props: ['msg', 'streaming'],
+    emits: ['regenerate', 'edit'],
     setup() {
       return { store }
     },
@@ -101,6 +102,12 @@
         } catch (e) {
           return String(args)
         }
+      },
+      copyText(msg) {
+        navigator.clipboard.writeText(msg.content || '').then(
+          () => store.notify('已复制', 'ok'),
+          () => store.notify('复制失败')
+        )
       },
     },
   }

@@ -397,12 +397,79 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         return ctx.storage.add_message(session_id, "player", payload.content, attachments=payload.attachments)
 
     @app.delete("/api/sessions/{session_id}/messages")
-    async def clear_messages(session_id: int):
+    async def clear_messages(session_id: int, after: int | None = None):
         if not ctx.storage.get_session(session_id):
             raise HTTPException(404, "会话不存在")
-        with ctx.storage._conn() as conn:
-            conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+        if after is not None:
+            ctx.storage.delete_messages_after(session_id, after)
+        else:
+            with ctx.storage._conn() as conn:
+                conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
         return {"ok": True}
+
+    class UpdateMessagePayload(BaseModel):
+        content: str | None = None
+        blocks: list | None = None
+
+    @app.put("/api/sessions/{session_id}/messages/{message_id}")
+    async def update_message(session_id: int, message_id: int, payload: UpdateMessagePayload):
+        if not ctx.storage.get_session(session_id):
+            raise HTTPException(404, "会话不存在")
+        msg = ctx.storage.update_message(session_id, message_id, content=payload.content, blocks=payload.blocks)
+        if not msg:
+            raise HTTPException(404, "消息不存在")
+        return msg
+
+    @app.get("/api/sessions/{session_id}/debug")
+    async def session_debug(session_id: int):
+        session = ctx.storage.get_session(session_id)
+        if not session:
+            raise HTTPException(404, "会话不存在")
+        role = ctx.roles.get(session["character_name"])
+        model_def = None
+        thinking = None
+        skills = []
+        system_prompt = ""
+        if role:
+            model_def = ctx.models.get(role.get("model") or "")
+            if model_def:
+                thinking = build_thinking(
+                    model_def.get("model", ""),
+                    role.get("thinking_mode", ""),
+                    role.get("thinking_custom", ""),
+                )
+            skills = ctx.resolve_skills(role) + ctx.resolve_search_skills(role)
+            mode_text = ""
+            if session.get("mode"):
+                mode = ctx.modes.get(session["mode"])
+                if mode:
+                    mode_text = mode.get("content", "")
+            model_name = model_def.get("model", "") if model_def else ""
+            system_prompt = ctx.assembler.build_system_prompt(
+                role.get("setting", ""), role["name"], cfg.player()["name"], mode_text, model_name
+            )
+
+        def mask_key(data: dict) -> dict:
+            out = dict(data)
+            if out.get("api_key"):
+                out["api_key"] = "******"
+            return out
+
+        return {
+            "session": session,
+            "role": role,
+            "model": mask_key(model_def) if model_def else None,
+            "thinking": thinking,
+            "parameters": {
+                "temperature": cfg.get("temperature"),
+                "max_tokens": cfg.get("max_tokens"),
+                "timeout": cfg.get("timeout"),
+                "max_retries": cfg.get("max_retries"),
+            },
+            "system_prompt": system_prompt,
+            "skills": [mask_key(s) for s in skills],
+            "messages": ctx.storage.list_messages(session_id),
+        }
 
     @app.get("/api/thinking-presets")
     async def thinking_presets():
@@ -508,8 +575,26 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                                 blocks[-1]["result"] = event[2]
                             await ws.send_json({"type": "tool_result", "name": event[1], "text": event[2][:800]})
                 except ProviderError as e:
-                    await ws.send_json({"type": "error", "text": str(e)})
+                    try:
+                        await ws.send_json({"type": "error", "text": str(e)})
+                    except WebSocketDisconnect:
+                        pass
                     continue
+                except WebSocketDisconnect:
+                    if text_buf:
+                        blocks.append({"type": "text", "text": text_buf})
+                    if reply or reasoning or tool_events:
+                        ctx.storage.add_message(
+                            session_id,
+                            "character",
+                            reply,
+                            reasoning,
+                            tool_events,
+                            character_name=role["name"],
+                            blocks=blocks,
+                            interrupted=True,
+                        )
+                    raise
                 if text_buf:
                     blocks.append({"type": "text", "text": text_buf})
                 saved = ctx.storage.add_message(

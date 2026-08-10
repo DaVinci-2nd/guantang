@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS messages (
     tool_events TEXT NOT NULL DEFAULT '[]',
     attachments TEXT NOT NULL DEFAULT '[]',
     blocks TEXT NOT NULL DEFAULT '[]',
+    interrupted INTEGER NOT NULL DEFAULT 0,
     created_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
@@ -53,6 +54,8 @@ class Storage:
                 conn.execute("ALTER TABLE messages ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'")
             if "blocks" not in cols:
                 conn.execute("ALTER TABLE messages ADD COLUMN blocks TEXT NOT NULL DEFAULT '[]'")
+            if "interrupted" not in cols:
+                conn.execute("ALTER TABLE messages ADD COLUMN interrupted INTEGER NOT NULL DEFAULT 0")
 
     def create_session(self, character_name: str = "", mode: str = "") -> dict:
         now = _now()
@@ -109,11 +112,12 @@ class Storage:
         character_name: str = "",
         attachments: list | None = None,
         blocks: list | None = None,
+        interrupted: bool = False,
     ) -> dict:
         now = _now()
         with self._conn() as conn:
             cur = conn.execute(
-                "INSERT INTO messages (session_id, sender, character_name, content, reasoning, tool_events, attachments, blocks, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO messages (session_id, sender, character_name, content, reasoning, tool_events, attachments, blocks, interrupted, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     session_id,
                     sender,
@@ -123,12 +127,45 @@ class Storage:
                     json.dumps(tool_events or [], ensure_ascii=False),
                     json.dumps(attachments or [], ensure_ascii=False),
                     json.dumps(blocks or [], ensure_ascii=False),
+                    1 if interrupted else 0,
                     now,
                 ),
             )
             conn.execute("UPDATE sessions SET updated_at = ? WHERE id = ?", (now, session_id))
             row = conn.execute("SELECT * FROM messages WHERE id = ?", (cur.lastrowid,)).fetchone()
             return self._row_to_message(row)
+
+    def update_message(self, session_id: int, message_id: int, content: str | None = None, blocks: list | None = None) -> dict | None:
+        fields = []
+        values = []
+        if content is not None:
+            fields.append("content = ?")
+            values.append(content)
+        if blocks is not None:
+            fields.append("blocks = ?")
+            values.append(json.dumps(blocks, ensure_ascii=False))
+        if not fields:
+            return self.get_message(session_id, message_id)
+        values.append(message_id)
+        values.append(session_id)
+        with self._conn() as conn:
+            conn.execute(f"UPDATE messages SET {', '.join(fields)} WHERE id = ? AND session_id = ?", values)
+        return self.get_message(session_id, message_id)
+
+    def get_message(self, session_id: int, message_id: int) -> dict | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM messages WHERE id = ? AND session_id = ?", (message_id, session_id)
+            ).fetchone()
+            return self._row_to_message(row) if row else None
+
+    def delete_messages_after(self, session_id: int, message_id: int):
+        now = _now()
+        with self._conn() as conn:
+            conn.execute(
+                "DELETE FROM messages WHERE session_id = ? AND id > ?", (session_id, message_id)
+            )
+            conn.execute("UPDATE sessions SET updated_at = ? WHERE id = ?", (now, session_id))
 
     @staticmethod
     def _row_to_message(row: sqlite3.Row) -> dict:

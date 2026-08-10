@@ -10,25 +10,12 @@
       const chatList = ref(null)
       const attachments = ref([])
       const fileInput = ref(null)
+      const editTarget = ref(null)
+      const editText = ref('')
+      const debugData = ref(null)
 
-      async function onFiles(e) {
-        const files = [...e.target.files]
-        e.target.value = ''
-        for (const f of files) {
-          const item = { name: f.name, size: f.size, readable: false, content: '' }
-          if (f.size <= 2 * 1024 * 1024) {
-            try {
-              const buf = await f.arrayBuffer()
-              new TextDecoder('utf-8', { fatal: true }).decode(buf)
-              item.content = new TextDecoder('utf-8').decode(buf)
-              item.readable = true
-            } catch (err) {
-              item.readable = false
-            }
-          }
-          attachments.value.push(item)
-        }
-      }
+      let activeWs = null
+      let activeAiMsg = null
 
       const filteredSessions = computed(() => {
         if (store.filterCharacter === '全部') return store.sessions
@@ -63,66 +50,49 @@
         return store.currentSession()
       }
 
-      async function newSession() {
-        await store.newSession()
-        scrollBottom(true)
-      }
-
-      async function removeSession(id) {
-        if (!confirm('删除这个会话？')) return
-        await api.del(`/api/sessions/${id}`)
-        if (store.currentSessionId === id) {
-          store.currentSessionId = null
-          store.messages = []
+      async function onFiles(e) {
+        const files = [...e.target.files]
+        e.target.value = ''
+        for (const f of files) {
+          const item = { name: f.name, size: f.size, readable: false, content: '' }
+          if (f.size <= 2 * 1024 * 1024) {
+            try {
+              const buf = await f.arrayBuffer()
+              new TextDecoder('utf-8', { fatal: true }).decode(buf)
+              item.content = new TextDecoder('utf-8').decode(buf)
+              item.readable = true
+            } catch (err) {
+              item.readable = false
+            }
+          }
+          attachments.value.push(item)
         }
-        await store.loadSessions()
       }
 
-      async function clearSession() {
-        if (!confirm('清空当前会话的所有消息？')) return
-        await api.del(`/api/sessions/${store.currentSessionId}/messages`)
-        store.messages = []
-      }
-
-      function formatTime(t) {
-        if (!t) return ''
-        const d = new Date(t * 1000)
-        const pad = (n) => String(n).padStart(2, '0')
-        return `${d.getMonth() + 1}-${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`
-      }
-
-      function renderMarkdown(text) {
-        try { return marked.parse(text || '') } catch (e) { return text || '' }
-      }
-
-      async function onModeChange(e) {
-        await store.switchSessionMode(e.target.value)
-      }
-
-      async function toggleCentered() {
-        store.centered = !store.centered
-        await store.saveUi()
-      }
-
-      async function send() {
-        const text = draft.value.trim()
-        if ((!text && !attachments.value.length) || store.streaming) return
-        const sessionId = store.currentSessionId
-        if (!sessionId) return
+      function buildContent(text, attList) {
         let content = text
-        if (attachments.value.length) {
-          const parts = attachments.value.map((a) =>
+        if (attList && attList.length) {
+          const parts = attList.map((a) =>
             a.readable ? `【附件：${a.name}】\n${a.content}` : `【附件：${a.name}】（二进制文件，内容无法直接读取）`
           )
           content = text ? text + '\n\n' + parts.join('\n\n') : parts.join('\n\n')
         }
-        const meta = attachments.value.map((a) => ({ name: a.name, size: a.size, readable: a.readable }))
-        draft.value = ''
-        attachments.value = []
+        return content
+      }
+
+      function buildAttachMeta(attList) {
+        return (attList || []).map((a) => ({ name: a.name, size: a.size, readable: a.readable }))
+      }
+
+      async function sendContent(content, attList, sessionId) {
+        if (store.streaming) return
+        const sid = sessionId || store.currentSessionId
+        if (!sid) return
+        const meta = buildAttachMeta(attList)
         store.streaming = true
         let saved
         try {
-          saved = await api.post(`/api/sessions/${sessionId}/messages`, { content, attachments: meta })
+          saved = await api.post(`/api/sessions/${sid}/messages`, { content, attachments: meta })
         } catch (e) {
           store.streaming = false
           store.notify(e.message)
@@ -140,12 +110,15 @@
           tool_events: [],
           blocks: [],
           streaming: true,
+          interrupted: false,
           created_at: Date.now() / 1000,
         })
         store.messages.push(aiMsg)
+        activeAiMsg = aiMsg
         scrollBottom(true)
 
         const ws = new WebSocket(`ws://${location.host}/ws/chat`)
+        activeWs = ws
         ws.onmessage = (ev) => {
           const data = JSON.parse(ev.data)
           if (data.type === 'reasoning') {
@@ -186,6 +159,7 @@
             aiMsg.tool_events = data.message.tool_events
             aiMsg.reasoning = data.message.reasoning
             aiMsg.content = data.message.content
+            aiMsg.interrupted = false
             if (data.message.blocks && data.message.blocks.length) {
               aiMsg.blocks = data.message.blocks
             }
@@ -200,9 +174,151 @@
           aiMsg.streaming = false
           store.streaming = false
         }
-        ws.onopen = () => {
-          ws.send(JSON.stringify({ session_id: sessionId, message: text }))
+        ws.onclose = () => {
+          if (aiMsg.streaming) {
+            aiMsg.streaming = false
+            aiMsg.interrupted = true
+            store.streaming = false
+          }
         }
+        ws.onopen = () => {
+          ws.send(JSON.stringify({ session_id: sid, message: content }))
+        }
+      }
+
+      async function send() {
+        const text = draft.value.trim()
+        if ((!text && !attachments.value.length) || store.streaming) return
+        const content = buildContent(text, attachments.value)
+        draft.value = ''
+        attachments.value = []
+        await sendContent(content, [], store.currentSessionId)
+      }
+
+      function abortStream() {
+        if (!store.streaming || !activeWs) return
+        const aiMsg = activeAiMsg
+        activeWs.close()
+        if (aiMsg) {
+          aiMsg.streaming = false
+          aiMsg.interrupted = true
+        }
+        store.streaming = false
+      }
+
+      async function newSession() {
+        await store.newSession()
+        scrollBottom(true)
+      }
+
+      async function removeSession(id) {
+        if (!confirm('删除这个会话？')) return
+        await api.del(`/api/sessions/${id}`)
+        if (store.currentSessionId === id) {
+          store.currentSessionId = null
+          store.messages = []
+        }
+        await store.loadSessions()
+      }
+
+      async function clearSession() {
+        if (!confirm('清空当前会话的所有消息？')) return
+        await api.del(`/api/sessions/${store.currentSessionId}/messages`)
+        store.messages = []
+      }
+
+      function findPlayerMsg(msg) {
+        if (msg.sender === 'player') return msg
+        const idx = store.messages.findIndex((m) => m.key === msg.key)
+        for (let i = idx - 1; i >= 0; i--) {
+          if (store.messages[i].sender === 'player') return store.messages[i]
+        }
+        return null
+      }
+
+      async function regenerate(msg) {
+        const player = findPlayerMsg(msg)
+        if (!player || store.streaming) return
+        const sid = store.currentSessionId
+        if (!sid) return
+        if (player.id) {
+          await api.del(`/api/sessions/${sid}/messages?after=${player.id}`)
+        }
+        const idx = store.messages.findIndex((m) => m.key === player.key)
+        store.messages = store.messages.slice(0, idx + 1)
+        await sendContent(player.content, player.attachments || [], sid)
+      }
+
+      function openEdit(msg) {
+        editTarget.value = msg
+        editText.value = msg.content || ''
+      }
+
+      function closeEdit() {
+        editTarget.value = null
+      }
+
+      async function saveEdit(sendAfter) {
+        const msg = editTarget.value
+        const sid = store.currentSessionId
+        if (!msg || !sid) return
+        const isPlayer = msg.sender === 'player'
+        const body = { content: editText.value }
+        if (!isPlayer) body.blocks = []
+        try {
+          const updated = await api.put(`/api/sessions/${sid}/messages/${msg.id}`, body)
+          msg.content = updated.content
+          if (!isPlayer) {
+            msg.blocks = []
+          }
+        } catch (e) {
+          store.notify(e.message)
+          return
+        }
+        editTarget.value = null
+        if (isPlayer && sendAfter) {
+          const player = msg
+          if (player.id) {
+            await api.del(`/api/sessions/${sid}/messages?after=${player.id}`)
+          }
+          const idx = store.messages.findIndex((m) => m.key === player.key)
+          store.messages = store.messages.slice(0, idx + 1)
+          await sendContent(player.content, player.attachments || [], sid)
+        }
+      }
+
+      async function showDebug() {
+        const sid = store.currentSessionId
+        if (!sid) return
+        try {
+          debugData.value = await api.get(`/api/sessions/${sid}/debug`)
+        } catch (e) {
+          store.notify(e.message)
+        }
+      }
+
+      function debugJson(value) {
+        try { return JSON.stringify(value, null, 2) } catch (e) { return String(value) }
+      }
+
+      function formatTime(t) {
+        if (!t) return ''
+        const d = new Date(t * 1000)
+        const pad = (n) => String(n).padStart(2, '0')
+        return `${d.getMonth() + 1}-${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+      }
+
+      function renderMarkdown(text) {
+        try { return marked.parse(text || '') } catch (e) { return text || '' }
+      }
+
+      async function onModeChange(e) {
+        await store.switchSessionMode(e.target.value)
+      }
+
+      async function toggleCentered() {
+        store.centered = !store.centered
+        await store.saveUi()
       }
 
       watch(() => store.currentSessionId, () => scrollBottom(true))
@@ -211,6 +327,8 @@
         store, draft, chatList, filteredSessions, modeOptions, filterOptions,
         currentRole, currentSession, newSession, removeSession, clearSession, formatTime,
         renderMarkdown, onModeChange, send, attachments, onFiles, fileInput, toggleCentered,
+        abortStream, regenerate, editTarget, editText, openEdit, closeEdit, saveEdit,
+        debugData, showDebug, debugJson,
       }
     },
   }

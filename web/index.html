@@ -421,6 +421,7 @@
       <div class="msg-meta">
         <span class="msg-name">{{ msg.sender === 'character' ? (msg.character_name || '角色') : store.player.name }}</span>
         <span class="msg-time">{{ formatTime(msg.created_at) }}</span>
+        <span v-if="msg.interrupted" class="msg-interrupted">已中断</span>
       </div>
       <div v-if="msg.reasoning" class="reasoning">
         <button class="reasoning-toggle" @click="showReasoning = !showReasoning">
@@ -469,6 +470,17 @@
         <div v-if="msg.content" class="msg-content markdown" v-html="renderMarkdown(msg.content)"></div>
       </template>
       <div v-if="streaming" class="streaming-hint">正在回复<span class="dots">…</span></div>
+      <div class="msg-actions">
+        <button class="icon-btn small" title="复制" @click="copyText(msg)">
+          <icon name="copy"></icon>
+        </button>
+        <button class="icon-btn small" title="重新输出" @click="$emit('regenerate', msg)">
+          <icon name="refresh"></icon>
+        </button>
+        <button class="icon-btn small" title="改写" @click="$emit('edit', msg)">
+          <icon name="pencil"></icon>
+        </button>
+      </div>
     </div>
   </div>
 </template>
@@ -522,10 +534,13 @@
         <button class="icon-btn" :title="store.centered ? '取消集中显示' : '集中显示'" @click="toggleCentered">
           <icon name="center"></icon>
         </button>
+        <button class="icon-btn" title="会话数据预览" @click="showDebug">
+          <icon name="eye"></icon>
+        </button>
       </div>
       <div class="chat-center" :class="{ centered: store.centered }">
         <div class="chat-list" ref="chatList">
-          <message-bubble v-for="m in store.messages" :key="m.key" :msg="m" :streaming="m.streaming"></message-bubble>
+          <message-bubble v-for="m in store.messages" :key="m.key" :msg="m" :streaming="m.streaming" @regenerate="regenerate" @edit="openEdit"></message-bubble>
         </div>
       </div>
       <div class="chat-input-row">
@@ -551,11 +566,70 @@
               ></textarea>
             </div>
           </div>
-          <button class="primary-btn send-btn" :disabled="store.streaming || (!draft.trim() && !attachments.length)" @click="send">
+          <button v-if="store.streaming" class="primary-btn send-btn abort" title="中断" @click="abortStream">
+            <icon name="square"></icon>
+          </button>
+          <button v-else class="primary-btn send-btn" :disabled="store.streaming || (!draft.trim() && !attachments.length)" @click="send">
             <icon name="send"></icon>
           </button>
         </div>
       </div>
+      <modal v-if="editTarget" :title="editTarget.sender === 'player' ? '改写消息' : '改写 AI 输出'" @close="closeEdit">
+        <div class="form">
+          <div class="field">
+            <textarea v-model="editText" rows="8" placeholder="编辑原始内容"></textarea>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <template v-if="editTarget.sender === 'player'">
+            <button class="primary-btn" @click="saveEdit(true)"><span>确定并发送</span></button>
+            <button class="ghost-btn" @click="saveEdit(false)">确定</button>
+          </template>
+          <template v-else>
+            <button class="primary-btn" @click="saveEdit(false)"><span>确定</span></button>
+          </template>
+          <button class="ghost-btn" @click="closeEdit">取消</button>
+        </div>
+      </modal>
+      <modal v-if="debugData" title="会话数据预览" @close="debugData = null" wide>
+        <div class="debug-view">
+          <div class="debug-section">
+            <div class="debug-title">会话</div>
+            <pre class="prompt-preview">{{ debugJson(debugData.session) }}</pre>
+          </div>
+          <div class="debug-section">
+            <div class="debug-title">角色</div>
+            <pre class="prompt-preview">{{ debugJson(debugData.role) }}</pre>
+          </div>
+          <div class="debug-section">
+            <div class="debug-title">模型配置</div>
+            <pre class="prompt-preview">{{ debugJson(debugData.model) }}</pre>
+          </div>
+          <div class="debug-section">
+            <div class="debug-title">思考配置</div>
+            <pre class="prompt-preview">{{ debugJson(debugData.thinking) }}</pre>
+          </div>
+          <div class="debug-section">
+            <div class="debug-title">模型参数</div>
+            <pre class="prompt-preview">{{ debugJson(debugData.parameters) }}</pre>
+          </div>
+          <div class="debug-section">
+            <div class="debug-title">生效系统提示词</div>
+            <pre class="prompt-preview">{{ debugData.system_prompt || '（空）' }}</pre>
+          </div>
+          <div class="debug-section">
+            <div class="debug-title">技能</div>
+            <pre class="prompt-preview">{{ debugJson(debugData.skills) }}</pre>
+          </div>
+          <div class="debug-section">
+            <div class="debug-title">消息记录</div>
+            <pre class="prompt-preview">{{ debugJson(debugData.messages) }}</pre>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button class="ghost-btn" @click="debugData = null">关闭</button>
+        </div>
+      </modal>
     </template>
   </div>
 </template>
