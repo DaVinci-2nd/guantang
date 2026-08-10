@@ -13,6 +13,7 @@ ui:
   theme: dark
   sidebar_left: true
   sidebar_right: true
+  centered: true
 
 system_prompt_file: prompts/system.md
 rules_file: prompts/rules.md

@@ -44,6 +44,7 @@ class Config:
             "theme": u.get("theme", "dark"),
             "sidebar_left": u.get("sidebar_left", True),
             "sidebar_right": u.get("sidebar_right", True),
+            "centered": u.get("centered", True),
         }
 
     def save(self):
@@ -58,7 +59,7 @@ class Config:
         if avatar is not None:
             p["avatar"] = avatar
 
-    def set_ui(self, theme=None, sidebar_left=None, sidebar_right=None):
+    def set_ui(self, theme=None, sidebar_left=None, sidebar_right=None, centered=None):
         u = self.data.setdefault("ui", {})
         if theme is not None:
             u["theme"] = theme
@@ -66,3 +67,5 @@ class Config:
             u["sidebar_left"] = sidebar_left
         if sidebar_right is not None:
             u["sidebar_right"] = sidebar_right
+        if centered is not None:
+            u["centered"] = centered

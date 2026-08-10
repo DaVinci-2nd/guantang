@@ -93,6 +93,15 @@
       renderMarkdown(text) {
         try { return marked.parse(text || '') } catch (e) { return text || '' }
       },
+      prettyArgs(args) {
+        if (!args) return ''
+        try {
+          const text = JSON.stringify(args, null, 2)
+          return text.length > 500 ? text.slice(0, 500) + '…' : text
+        } catch (e) {
+          return String(args)
+        }
+      },
     },
   }
 

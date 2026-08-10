@@ -444,6 +444,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 theme=payload.ui.get("theme"),
                 sidebar_left=payload.ui.get("sidebar_left"),
                 sidebar_right=payload.ui.get("sidebar_right"),
+                centered=payload.ui.get("centered"),
             )
         cfg.save()
         return {"player": cfg.player(), "ui": cfg.ui()}
@@ -492,8 +493,10 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                             )
                         elif kind == "tool_exec":
                             await ws.send_json({"type": "tool_exec", "name": event[1]})
+                            tool_events.append({"name": event[1], "arguments": event[2], "result": ""})
                         elif kind == "tool_result":
-                            tool_events.append({"name": event[1], "result": event[2]})
+                            if tool_events:
+                                tool_events[-1]["result"] = event[2]
                             await ws.send_json({"type": "tool_result", "name": event[1], "text": event[2][:800]})
                 except ProviderError as e:
                     await ws.send_json({"type": "error", "text": str(e)})

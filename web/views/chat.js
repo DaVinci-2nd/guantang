@@ -42,7 +42,14 @@
 
       const filterOptions = computed(() => ['全部', ...store.sessionCharacters])
 
-      function scrollBottom() {
+      function nearBottom() {
+        const el = chatList.value
+        if (!el) return true
+        return el.scrollHeight - el.scrollTop - el.clientHeight < 80
+      }
+
+      function scrollBottom(force = false) {
+        if (!force && !nearBottom()) return
         nextTick(() => {
           if (chatList.value) chatList.value.scrollTop = chatList.value.scrollHeight
         })
@@ -58,7 +65,7 @@
 
       async function newSession() {
         await store.newSession()
-        scrollBottom()
+        scrollBottom(true)
       }
 
       async function removeSession(id) {
@@ -90,6 +97,11 @@
 
       async function onModeChange(e) {
         await store.switchSessionMode(e.target.value)
+      }
+
+      async function toggleCentered() {
+        store.centered = !store.centered
+        await store.saveUi()
       }
 
       async function send() {
@@ -126,11 +138,12 @@
           content: '',
           reasoning: '',
           tool_events: [],
+          blocks: [],
           streaming: true,
           created_at: Date.now() / 1000,
         })
         store.messages.push(aiMsg)
-        scrollBottom()
+        scrollBottom(true)
 
         const ws = new WebSocket(`ws://${location.host}/ws/chat`)
         ws.onmessage = (ev) => {
@@ -140,11 +153,13 @@
             scrollBottom()
           } else if (data.type === 'text') {
             aiMsg.content += data.delta
+            const last = aiMsg.blocks[aiMsg.blocks.length - 1]
+            if (last && last.type === 'text') last.text += data.delta
+            else aiMsg.blocks.push({ type: 'text', text: data.delta })
             scrollBottom()
-          } else if (data.type === 'warn') {
-            aiMsg.reasoning += `\n[中文守则] ${data.text}\n`
           } else if (data.type === 'tool_call') {
             aiMsg.tool_events.push({ name: data.name, arguments: data.arguments, result: '' })
+            aiMsg.blocks.push({ type: 'tool', name: data.name, arguments: data.arguments, status: 'running', result: '', open: false })
           } else if (data.type === 'tool_exec') {
             const last = aiMsg.tool_events[aiMsg.tool_events.length - 1]
             if (last) last.result = '执行中…'
@@ -152,6 +167,11 @@
           } else if (data.type === 'tool_result') {
             const last = aiMsg.tool_events[aiMsg.tool_events.length - 1]
             if (last) last.result = data.text
+            const tb = [...aiMsg.blocks].reverse().find((b) => b.type === 'tool')
+            if (tb) {
+              tb.status = 'done'
+              tb.result = data.text
+            }
             scrollBottom()
           } else if (data.type === 'error') {
             aiMsg.content = aiMsg.content || ''
@@ -166,6 +186,7 @@
             aiMsg.tool_events = data.message.tool_events
             aiMsg.reasoning = data.message.reasoning
             aiMsg.content = data.message.content
+            aiMsg.blocks = null
             store.streaming = false
             ws.close()
             store.loadSessions().catch(() => {})
@@ -182,12 +203,12 @@
         }
       }
 
-      watch(() => store.currentSessionId, () => scrollBottom())
+      watch(() => store.currentSessionId, () => scrollBottom(true))
 
       return {
         store, draft, chatList, filteredSessions, modeOptions, filterOptions,
         currentRole, currentSession, newSession, removeSession, clearSession, formatTime,
-        renderMarkdown, onModeChange, send, attachments, onFiles, fileInput,
+        renderMarkdown, onModeChange, send, attachments, onFiles, fileInput, toggleCentered,
       }
     },
   }

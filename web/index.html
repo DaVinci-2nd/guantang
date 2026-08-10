@@ -428,23 +428,46 @@
         </button>
         <pre v-if="showReasoning" class="reasoning-text">{{ msg.reasoning }}</pre>
       </div>
-      <div v-if="msg.tool_events && msg.tool_events.length" class="tool-events">
-        <button class="reasoning-toggle" @click="showTools = !showTools">
-          <icon name="skill"></icon><span>工具调用 {{ msg.tool_events.length }}</span><icon name="chevron_down"></icon>
-        </button>
-        <div v-if="showTools" class="tool-list">
-          <div v-for="(t, i) in msg.tool_events" :key="i" class="tool-item">
-            <div class="tool-name"><icon name="skill"></icon><span>{{ t.name }}</span></div>
-            <pre class="tool-result">{{ t.result }}</pre>
-          </div>
-        </div>
-      </div>
       <div v-if="msg.attachments && msg.attachments.length" class="msg-attachments">
         <span v-for="(a, i) in msg.attachments" :key="i" class="attach-chip static">
-          <icon name="file_text"/><span class="attach-name">{{ a.name }}</span>
+          <icon name="file_text"></icon><span class="attach-name">{{ a.name }}</span>
         </span>
       </div>
-      <div v-if="msg.content" class="msg-content markdown" v-html="renderMarkdown(msg.content)"></div>
+      <div v-if="msg.blocks && msg.blocks.length" class="msg-blocks">
+        <template v-for="(b, i) in msg.blocks" :key="i">
+          <div v-if="b.type === 'text' && b.text" class="msg-content markdown" v-html="renderMarkdown(b.text)"></div>
+          <div v-else-if="b.type === 'tool'" class="tool-inline">
+            <button class="reasoning-toggle" @click="b.open = !b.open">
+              <icon name="skill"></icon><span>{{ b.name }}</span>
+              <span class="tool-status" :class="b.status === 'running' ? 'running' : 'done'">{{ b.status === 'running' ? '运行中…' : '完成' }}</span>
+              <icon name="chevron_down"></icon>
+            </button>
+            <div v-if="b.open" class="tool-list">
+              <div class="tool-item">
+                <div class="tool-name"><span>参数</span></div>
+                <pre class="tool-result">{{ prettyArgs(b.arguments) }}</pre>
+                <div class="tool-name"><span>结果</span></div>
+                <pre class="tool-result">{{ b.result || '（无）' }}</pre>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+      <template v-else>
+        <div v-if="msg.tool_events && msg.tool_events.length" class="tool-events">
+          <button class="reasoning-toggle" @click="showTools = !showTools">
+            <icon name="skill"></icon><span>工具调用 {{ msg.tool_events.length }}</span><icon name="chevron_down"></icon>
+          </button>
+          <div v-if="showTools" class="tool-list">
+            <div v-for="(t, i) in msg.tool_events" :key="i" class="tool-item">
+              <div class="tool-name"><icon name="skill"></icon><span>{{ t.name }}</span></div>
+              <div v-if="t.arguments && Object.keys(t.arguments).length" class="tool-args">参数：{{ prettyArgs(t.arguments) }}</div>
+              <pre class="tool-result">{{ t.result }}</pre>
+            </div>
+          </div>
+        </div>
+        <div v-if="msg.content" class="msg-content markdown" v-html="renderMarkdown(msg.content)"></div>
+      </template>
       <div v-if="streaming" class="streaming-hint">正在回复<span class="dots">…</span></div>
     </div>
   </div>
@@ -496,35 +519,42 @@
         <button v-if="store.messages.length" class="text-btn" @click="clearSession">
           <icon name="trash"></icon><span>清空</span>
         </button>
+        <button class="icon-btn" :title="store.centered ? '取消集中显示' : '集中显示'" @click="toggleCentered">
+          <icon name="center"></icon>
+        </button>
       </div>
-      <div class="chat-list" ref="chatList">
-        <message-bubble v-for="m in store.messages" :key="m.key" :msg="m" :streaming="m.streaming"></message-bubble>
+      <div class="chat-center" :class="{ centered: store.centered }">
+        <div class="chat-list" ref="chatList">
+          <message-bubble v-for="m in store.messages" :key="m.key" :msg="m" :streaming="m.streaming"></message-bubble>
+        </div>
       </div>
       <div class="chat-input-row">
-        <div class="input-left">
-          <div v-if="attachments.length" class="attach-list">
-            <span v-for="(a, i) in attachments" :key="i" class="attach-chip">
-              <icon name="file_text"/><span class="attach-name">{{ a.name }}</span>
-              <button class="icon-btn small" title="移除" @click="attachments.splice(i, 1)"><icon name="x"></icon></button>
-            </span>
+        <div class="input-center" :class="{ centered: store.centered }">
+          <div class="input-left">
+            <div v-if="attachments.length" class="attach-list">
+              <span v-for="(a, i) in attachments" :key="i" class="attach-chip">
+                <icon name="file_text"/><span class="attach-name">{{ a.name }}</span>
+                <button class="icon-btn small" title="移除" @click="attachments.splice(i, 1)"><icon name="x"></icon></button>
+              </span>
+            </div>
+            <div class="input-bar">
+              <button class="icon-btn" title="添加文件" @click="fileInput.click()">
+                <icon name="paperclip"></icon>
+              </button>
+              <input type="file" ref="fileInput" multiple style="display:none" @change="onFiles"/>
+              <textarea
+                class="chat-input"
+                v-model="draft"
+                :placeholder="store.streaming ? '回复中…' : '输入消息，Enter 发送，Shift+Enter 换行'"
+                :disabled="store.streaming"
+                @keydown.enter.exact.prevent="send"
+              ></textarea>
+            </div>
           </div>
-          <div class="input-bar">
-            <button class="icon-btn" title="添加文件" @click="fileInput.click()">
-              <icon name="paperclip"></icon>
-            </button>
-            <input type="file" ref="fileInput" multiple style="display:none" @change="onFiles"/>
-            <textarea
-              class="chat-input"
-              v-model="draft"
-              :placeholder="store.streaming ? '回复中…' : '输入消息，Enter 发送，Shift+Enter 换行'"
-              :disabled="store.streaming"
-              @keydown.enter.exact.prevent="send"
-            ></textarea>
-          </div>
+          <button class="primary-btn send-btn" :disabled="store.streaming || (!draft.trim() && !attachments.length)" @click="send">
+            <icon name="send"></icon>
+          </button>
         </div>
-        <button class="primary-btn send-btn" :disabled="store.streaming || (!draft.trim() && !attachments.length)" @click="send">
-          <icon name="send"></icon>
-        </button>
       </div>
     </template>
   </div>

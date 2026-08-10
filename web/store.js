@@ -6,6 +6,7 @@
     theme: 'dark',
     leftOpen: true,
     rightOpen: true,
+    centered: true,
     roles: [],
     skills: [],
     modes: [],
@@ -45,6 +46,7 @@
     store.theme = data.ui.theme
     store.leftOpen = data.ui.sidebar_left
     store.rightOpen = data.ui.sidebar_right
+    store.centered = data.ui.centered !== false
     applyTheme()
   }
 
@@ -104,7 +106,7 @@
 
   async function saveUi() {
     await api.put('/api/config', {
-      ui: { theme: store.theme, sidebar_left: store.leftOpen, sidebar_right: store.rightOpen },
+      ui: { theme: store.theme, sidebar_left: store.leftOpen, sidebar_right: store.rightOpen, centered: store.centered },
     })
   }
 
