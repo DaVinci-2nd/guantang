@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS messages (
     reasoning TEXT NOT NULL DEFAULT '',
     tool_events TEXT NOT NULL DEFAULT '[]',
     attachments TEXT NOT NULL DEFAULT '[]',
+    blocks TEXT NOT NULL DEFAULT '[]',
     created_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
@@ -50,6 +51,8 @@ class Storage:
             cols = [r["name"] for r in conn.execute("PRAGMA table_info(messages)").fetchall()]
             if "attachments" not in cols:
                 conn.execute("ALTER TABLE messages ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'")
+            if "blocks" not in cols:
+                conn.execute("ALTER TABLE messages ADD COLUMN blocks TEXT NOT NULL DEFAULT '[]'")
 
     def create_session(self, character_name: str = "", mode: str = "") -> dict:
         now = _now()
@@ -105,11 +108,12 @@ class Storage:
         tool_events: list | None = None,
         character_name: str = "",
         attachments: list | None = None,
+        blocks: list | None = None,
     ) -> dict:
         now = _now()
         with self._conn() as conn:
             cur = conn.execute(
-                "INSERT INTO messages (session_id, sender, character_name, content, reasoning, tool_events, attachments, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO messages (session_id, sender, character_name, content, reasoning, tool_events, attachments, blocks, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     session_id,
                     sender,
@@ -118,6 +122,7 @@ class Storage:
                     reasoning,
                     json.dumps(tool_events or [], ensure_ascii=False),
                     json.dumps(attachments or [], ensure_ascii=False),
+                    json.dumps(blocks or [], ensure_ascii=False),
                     now,
                 ),
             )
@@ -136,6 +141,10 @@ class Storage:
             msg["attachments"] = json.loads(msg["attachments"])
         except (json.JSONDecodeError, TypeError):
             msg["attachments"] = []
+        try:
+            msg["blocks"] = json.loads(msg["blocks"])
+        except (json.JSONDecodeError, TypeError):
+            msg["blocks"] = []
         return msg
 
     def list_messages(self, session_id: int) -> list[dict]:

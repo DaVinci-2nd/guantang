@@ -478,6 +478,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 reasoning = ""
                 reply = ""
                 tool_events = []
+                blocks = []
+                text_buf = ""
                 try:
                     async for event in ctx.engine.run_messages(system, history, thinking=thinking):
                         kind = event[0]
@@ -486,23 +488,32 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                             await ws.send_json({"type": "reasoning", "delta": event[1]})
                         elif kind == "text":
                             reply += event[1]
+                            text_buf += event[1]
                             await ws.send_json({"type": "text", "delta": event[1]})
                         elif kind == "tool_call":
                             await ws.send_json(
                                 {"type": "tool_call", "name": event[1].name, "arguments": event[1].arguments}
                             )
                         elif kind == "tool_exec":
+                            if text_buf:
+                                blocks.append({"type": "text", "text": text_buf})
+                                text_buf = ""
                             await ws.send_json({"type": "tool_exec", "name": event[1]})
                             tool_events.append({"name": event[1], "arguments": event[2], "result": ""})
+                            blocks.append({"type": "tool", "name": event[1], "arguments": event[2], "result": ""})
                         elif kind == "tool_result":
                             if tool_events:
                                 tool_events[-1]["result"] = event[2]
+                            if blocks and blocks[-1]["type"] == "tool":
+                                blocks[-1]["result"] = event[2]
                             await ws.send_json({"type": "tool_result", "name": event[1], "text": event[2][:800]})
                 except ProviderError as e:
                     await ws.send_json({"type": "error", "text": str(e)})
                     continue
+                if text_buf:
+                    blocks.append({"type": "text", "text": text_buf})
                 saved = ctx.storage.add_message(
-                    session_id, "character", reply, reasoning, tool_events, character_name=role["name"]
+                    session_id, "character", reply, reasoning, tool_events, character_name=role["name"], blocks=blocks
                 )
                 await ws.send_json({"type": "end", "message": saved})
         except WebSocketDisconnect:

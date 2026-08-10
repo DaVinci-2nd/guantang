@@ -186,7 +186,9 @@
             aiMsg.tool_events = data.message.tool_events
             aiMsg.reasoning = data.message.reasoning
             aiMsg.content = data.message.content
-            aiMsg.blocks = null
+            if (data.message.blocks && data.message.blocks.length) {
+              aiMsg.blocks = data.message.blocks
+            }
             store.streaming = false
             ws.close()
             store.loadSessions().catch(() => {})
