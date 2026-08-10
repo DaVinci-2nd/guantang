@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 import mimetypes
@@ -70,6 +71,7 @@ class ModelPayload(BaseModel):
 class SessionPayload(BaseModel):
     character_name: str = ""
     mode: str = ""
+    title: str | None = None
 
 
 class MessagePayload(BaseModel):
@@ -81,6 +83,7 @@ class ConfigPayload(BaseModel):
     player: dict | None = None
     ui: dict | None = None
     multimodal: dict | None = None
+    auto_title: dict | None = None
 
 
 class AppContext:
@@ -96,6 +99,7 @@ class AppContext:
         self.provider_key = None
         self.mcp = MCPManager()
         self.engine = None
+        self.pending_tasks = []
 
     def resolve_skills(self, role: dict) -> list[dict]:
         chosen = set(role.get("skills") or [])
@@ -267,6 +271,105 @@ class AppContext:
         )
         return msg["id"]
 
+    def build_session_turn_text(self, messages: list[dict], rounds: int | None = None) -> str:
+        lines = []
+        for m in messages:
+            if m["sender"] not in ("player", "character"):
+                continue
+            content = (m.get("content") or "").strip()
+            if not content:
+                continue
+            label = "玩家" if m["sender"] == "player" else "角色"
+            lines.append(f"{label}：{content}")
+            if rounds is not None and len(lines) >= rounds * 2:
+                break
+        return "\n\n".join(lines)
+
+    async def auto_title_session(self, session_id: int, ws: WebSocket | None = None):
+        try:
+            at = self.cfg.auto_title()
+            session = self.storage.get_session(session_id)
+            if not session or session.get("title_set"):
+                return
+            if not at.get("enabled") or not at.get("model") or not at.get("prompt"):
+                return
+            model_def = self.models.get(at["model"])
+            if not model_def:
+                return
+            messages = self.storage.list_messages(session_id)
+            mode = int(at.get("mode", 1))
+            text = ""
+            if mode == 1:
+                first = next((m for m in messages if m["sender"] == "player"), None)
+                if not first:
+                    return
+                text = (first.get("content") or "").strip()
+            else:
+                rounds = int(at.get("rounds", 3)) if mode == 3 else 1
+                if rounds < 1:
+                    rounds = 1
+                if rounds > 9:
+                    rounds = 9
+                text = self.build_session_turn_text(messages, rounds)
+            if not text:
+                self.storage.update_session(session_id, title_set=1)
+                return
+            provider = build_provider(
+                model_def,
+                self.cfg.api_key(model_def.get("api_key", "DEEPSEEK_API_KEY")),
+                timeout=self.cfg.get("timeout", 120),
+                max_retries=self.cfg.get("max_retries", 2),
+            )
+            title = ""
+            try:
+                async for event in provider.stream_chat(
+                    [
+                        {"role": "system", "content": at["prompt"]},
+                        {"role": "user", "content": text},
+                    ]
+                ):
+                    if event[0] == "text":
+                        title += event[1]
+            finally:
+                await provider.close()
+            title = title.strip().replace("\n", " ")[:50]
+            self.storage.update_session(session_id, title=title, title_set=1)
+            if ws is not None:
+                try:
+                    await ws.send_json({"type": "title", "title": title, "session_id": session_id})
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def should_auto_title(self, session_id: int, player_count: int, ai_count: int) -> bool:
+        at = self.cfg.auto_title()
+        if not at.get("enabled") or not at.get("model") or not at.get("prompt"):
+            return False
+        session = self.storage.get_session(session_id)
+        if not session or session.get("title_set"):
+            return False
+        mode = int(at.get("mode", 1))
+        if mode == 1:
+            return player_count == 1
+        if mode == 2:
+            return player_count == 1 and ai_count >= 1
+        rounds = int(at.get("rounds", 3))
+        if rounds < 1:
+            rounds = 1
+        if rounds > 9:
+            rounds = 9
+        return player_count >= rounds and ai_count >= rounds
+
+    def maybe_auto_title(self, session_id: int, ws: WebSocket | None = None):
+        messages = self.storage.list_messages(session_id)
+        player_count = sum(1 for m in messages if m["sender"] == "player")
+        ai_count = sum(1 for m in messages if m["sender"] == "character")
+        if self.should_auto_title(session_id, player_count, ai_count):
+            task = asyncio.create_task(self.auto_title_session(session_id, ws))
+            self.pending_tasks.append(task)
+            task.add_done_callback(lambda t: self.pending_tasks.discard(t))
+
     def role_to_response(self, role: dict) -> dict:
         return {
             k: role.get(k)
@@ -306,6 +409,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             "player": cfg.player(),
             "ui": cfg.ui(),
             "multimodal": cfg.multimodal(),
+            "auto_title": cfg.auto_title(),
         }
 
     @app.get("/api/roles")
@@ -461,6 +565,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         session = ctx.storage.get_session(session_id)
         if not session:
             raise HTTPException(404, "会话不存在")
+        if payload.title is not None:
+            return ctx.storage.update_session(session_id, title=payload.title, title_set=1)
         if payload.character_name:
             if not ctx.roles.get(payload.character_name):
                 raise HTTPException(400, "角色不存在")
@@ -561,6 +667,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             "system_prompt": system_prompt,
             "skills": [mask_key(s) for s in skills],
             "multimodal": cfg.multimodal(),
+            "auto_title": cfg.auto_title(),
             "messages": ctx.storage.list_messages(session_id),
         }
 
@@ -606,7 +713,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     @app.get("/api/config")
     async def get_config():
-        return {"player": cfg.player(), "ui": cfg.ui(), "multimodal": cfg.multimodal()}
+        return {"player": cfg.player(), "ui": cfg.ui(), "multimodal": cfg.multimodal(), "auto_title": cfg.auto_title()}
 
     @app.put("/api/config")
     async def update_config(payload: ConfigPayload):
@@ -625,8 +732,16 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 model=payload.multimodal.get("model"),
                 prompt=payload.multimodal.get("prompt"),
             )
+        if payload.auto_title is not None:
+            cfg.set_auto_title(
+                enabled=payload.auto_title.get("enabled"),
+                model=payload.auto_title.get("model"),
+                prompt=payload.auto_title.get("prompt"),
+                mode=payload.auto_title.get("mode"),
+                rounds=payload.auto_title.get("rounds"),
+            )
         cfg.save()
-        return {"player": cfg.player(), "ui": cfg.ui(), "multimodal": cfg.multimodal()}
+        return {"player": cfg.player(), "ui": cfg.ui(), "multimodal": cfg.multimodal(), "auto_title": cfg.auto_title()}
 
     @app.websocket("/ws/chat")
     async def ws_chat(ws: WebSocket):
@@ -664,6 +779,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                         except WebSocketDisconnect:
                             raise
                 history = ctx.history_to_openai(history_messages)
+                ctx.maybe_auto_title(session_id, ws)
                 reasoning = ""
                 reply = ""
                 tool_events = []
@@ -716,12 +832,14 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                             blocks=blocks,
                             interrupted=True,
                         )
+                    ctx.maybe_auto_title(session_id)
                     raise
                 if text_buf:
                     blocks.append({"type": "text", "text": text_buf})
                 saved = ctx.storage.add_message(
                     session_id, "character", reply, reasoning, tool_events, character_name=role["name"], blocks=blocks
                 )
+                ctx.maybe_auto_title(session_id, ws)
                 await ws.send_json({"type": "end", "message": saved})
         except WebSocketDisconnect:
             pass

@@ -353,6 +353,12 @@
               tb.result = data.text
             }
             scrollBottom()
+          } else if (data.type === 'title') {
+            const s = store.sessions.find((x) => x.id === data.session_id)
+            if (s) {
+              s.title = data.title
+              s.title_set = 1
+            }
           } else if (data.type === 'error') {
             aiMsg.content = aiMsg.content || ''
             store.notify(data.text)
@@ -419,10 +425,14 @@
         await store.loadSessions()
       }
 
-      async function clearSession() {
-        if (!confirm('清空当前会话的所有消息？')) return
-        await api.del(`/api/sessions/${store.currentSessionId}/messages`)
+      async function deleteCurrentSession() {
+        const sid = store.currentSessionId
+        if (!sid) return
+        if (!confirm('删除当前会话？')) return
+        await api.del(`/api/sessions/${sid}`)
+        store.currentSessionId = null
         store.messages = []
+        await store.loadSessions()
       }
 
       function findPlayerMsg(msg) {
@@ -523,7 +533,7 @@
 
       return {
         store, chatList, editorEl, fileInput, filteredSessions, modeOptions, filterOptions,
-        currentRole, currentSession, newSession, removeSession, clearSession, formatTime,
+        currentRole, currentSession, newSession, deleteCurrentSession, formatTime,
         renderMarkdown, onModeChange, send, onFiles, toggleCentered, canSend,
         abortStream, regenerate, editTarget, editText, openEdit, closeEdit, saveEdit,
         debugData, showDebug, debugJson, previewTarget, openPreview,

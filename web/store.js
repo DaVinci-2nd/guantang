@@ -21,6 +21,7 @@
     messages: [],
     player: { name: '', avatar: '' },
     multimodal: { enabled: false, model: '', prompt: '' },
+    autoTitle: { enabled: false, model: '', prompt: '', mode: 1, rounds: 3 },
     streaming: false,
     ws: null,
     notify: { text: '', kind: '' },
@@ -45,6 +46,7 @@
     store.sessionCharacters = data.session_characters
     store.player = data.player
     store.multimodal = data.multimodal || { enabled: false, model: '', prompt: '' }
+    store.autoTitle = data.auto_title || { enabled: false, model: '', prompt: '', mode: 1, rounds: 3 }
     store.theme = data.ui.theme
     store.leftOpen = data.ui.sidebar_left
     store.rightOpen = data.ui.sidebar_right

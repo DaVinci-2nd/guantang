@@ -58,8 +58,8 @@
       <div v-for="s in filteredSessions" :key="s.id" class="session-item" :class="{ active: s.id === store.currentSessionId }" @click="selectSession(s.id)">
         <div class="session-title">{{ s.title || '新会话' }}</div>
         <div class="session-meta">{{ s.character_name || '未指定角色' }}</div>
-        <button class="icon-btn small" title="删除会话" @click.stop="removeSession(s.id)">
-          <icon name="trash"></icon>
+        <button class="icon-btn small" title="重命名会话" @click.stop="renameSession(s.id)">
+          <icon name="pencil"></icon>
         </button>
       </div>
       <div v-if="!filteredSessions.length" class="empty-hint">暂无会话</div>
@@ -384,6 +384,38 @@
       </div>
     </div>
     <div class="field card">
+      <span class="rules-title">自动会话标题</span>
+      <em class="field-hint">为未命名的会话自动生成标题，手动改过名字的会话不会触发</em>
+      <label class="field"><span>启用</span>
+        <select v-model="store.autoTitle.enabled">
+          <option :value="true">开启</option>
+          <option :value="false">关闭</option>
+        </select>
+      </label>
+      <label class="field"><span>标题模型</span>
+        <select v-model="store.autoTitle.model">
+          <option value="">未配置</option>
+          <option v-for="m in store.models" :key="m.name" :value="m.name">{{ m.name }}</option>
+        </select>
+      </label>
+      <div class="field"><span>标题提示词（手动填写，不内置）</span>
+        <textarea v-model="store.autoTitle.prompt" rows="3" placeholder="例如：请根据下面的对话内容，用一句简短的话作为会话标题，只输出标题本身"></textarea>
+      </div>
+      <label class="field"><span>触发模式</span>
+        <select v-model="store.autoTitle.mode">
+          <option :value="1">首条消息触发（默认）</option>
+          <option :value="2">第一轮结束触发（含中断）</option>
+          <option :value="3">指定轮次后触发</option>
+        </select>
+      </label>
+      <label class="field" v-if="store.autoTitle.mode == 3"><span>轮次数（1-9）</span>
+        <input v-model.number="store.autoTitle.rounds" type="number" min="1" max="9"/>
+      </label>
+      <div class="modal-actions">
+        <button class="primary-btn" @click="saveAutoTitle"><icon name="check"></icon><span>保存</span></button>
+      </div>
+    </div>
+    <div class="field card">
       <span class="rules-title">多模态识别</span>
       <em class="field-hint">启用后，消息中的图片会先交给下方指定的识别模型转为文字描述，再发送给当前角色模型（适配非多模态模型）</em>
       <label class="field"><span>启用</span>
@@ -553,8 +585,8 @@
           <option value="">无模式</option>
           <option v-for="m in modeOptions" :key="m" :value="m">{{ m }}</option>
         </select>
-        <button v-if="store.messages.length" class="text-btn" @click="clearSession">
-          <icon name="trash"></icon><span>清空</span>
+        <button v-if="!store.streaming" class="icon-btn" title="删除当前会话" @click="deleteCurrentSession">
+          <icon name="trash"></icon>
         </button>
         <button class="icon-btn" :title="store.centered ? '取消集中显示' : '集中显示'" @click="toggleCentered">
           <icon name="center"></icon>

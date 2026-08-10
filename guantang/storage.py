@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     title TEXT NOT NULL DEFAULT '',
     character_name TEXT NOT NULL DEFAULT '',
     mode TEXT NOT NULL DEFAULT '',
+    title_set INTEGER NOT NULL DEFAULT 0,
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL
 );
@@ -49,12 +50,15 @@ class Storage:
     def _init(self):
         with self._conn() as conn:
             conn.executescript(SCHEMA)
-            cols = [r["name"] for r in conn.execute("PRAGMA table_info(messages)").fetchall()]
-            if "attachments" not in cols:
+            cols = [r["name"] for r in conn.execute("PRAGMA table_info(sessions)").fetchall()]
+            if "title_set" not in cols:
+                conn.execute("ALTER TABLE sessions ADD COLUMN title_set INTEGER NOT NULL DEFAULT 0")
+            mcols = [r["name"] for r in conn.execute("PRAGMA table_info(messages)").fetchall()]
+            if "attachments" not in mcols:
                 conn.execute("ALTER TABLE messages ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'")
-            if "blocks" not in cols:
+            if "blocks" not in mcols:
                 conn.execute("ALTER TABLE messages ADD COLUMN blocks TEXT NOT NULL DEFAULT '[]'")
-            if "interrupted" not in cols:
+            if "interrupted" not in mcols:
                 conn.execute("ALTER TABLE messages ADD COLUMN interrupted INTEGER NOT NULL DEFAULT 0")
 
     def create_session(self, character_name: str = "", mode: str = "") -> dict:
@@ -77,7 +81,7 @@ class Storage:
             rows = conn.execute("SELECT * FROM sessions ORDER BY updated_at DESC").fetchall()
             return [dict(r) for r in rows]
 
-    def update_session(self, session_id: int, title=None, character_name=None, mode=None) -> dict | None:
+    def update_session(self, session_id: int, title=None, character_name=None, mode=None, title_set=None) -> dict | None:
         fields = []
         values = []
         if title is not None:
@@ -89,6 +93,9 @@ class Storage:
         if mode is not None:
             fields.append("mode = ?")
             values.append(mode)
+        if title_set is not None:
+            fields.append("title_set = ?")
+            values.append(1 if title_set else 0)
         if fields:
             fields.append("updated_at = ?")
             values.append(_now())

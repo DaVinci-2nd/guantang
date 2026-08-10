@@ -20,6 +20,13 @@ multimodal:
   model: ""
   prompt: ""
 
+auto_title:
+  enabled: false
+  model: ""
+  prompt: ""
+  mode: 1
+  rounds: 3
+
 system_prompt_file: prompts/system.md
 rules_file: prompts/rules.md
 translator_file: prompts/translator.md

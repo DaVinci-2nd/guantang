@@ -86,3 +86,26 @@ class Config:
             m["model"] = model
         if prompt is not None:
             m["prompt"] = prompt
+
+    def auto_title(self) -> dict:
+        a = self.data.get("auto_title") or {}
+        return {
+            "enabled": a.get("enabled", False),
+            "model": a.get("model", ""),
+            "prompt": a.get("prompt", ""),
+            "mode": a.get("mode", 1),
+            "rounds": a.get("rounds", 3),
+        }
+
+    def set_auto_title(self, enabled=None, model=None, prompt=None, mode=None, rounds=None):
+        a = self.data.setdefault("auto_title", {})
+        if enabled is not None:
+            a["enabled"] = enabled
+        if model is not None:
+            a["model"] = model
+        if prompt is not None:
+            a["prompt"] = prompt
+        if mode is not None:
+            a["mode"] = mode
+        if rounds is not None:
+            a["rounds"] = rounds

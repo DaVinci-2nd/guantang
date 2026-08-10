@@ -31,6 +31,16 @@
         }
       }
 
+      async function saveAutoTitle() {
+        try {
+          await api.put('/api/config', { auto_title: { ...store.autoTitle } })
+          await store.loadState()
+          store.notify('已保存', 'ok')
+        } catch (e) {
+          store.notify(e.message)
+        }
+      }
+
       function uploadPlayerAvatar() {
         if (playerAvatarFile.value) playerAvatarFile.value.click()
       }
@@ -51,7 +61,7 @@
         }
       }
 
-      return { store, playerName, playerAvatar, playerAvatarFile, savePlayer, saveMultimodal, uploadPlayerAvatar, onPlayerAvatarFile, applyTheme: store.applyTheme, saveUi: store.saveUi }
+      return { store, playerName, playerAvatar, playerAvatarFile, savePlayer, saveMultimodal, saveAutoTitle, uploadPlayerAvatar, onPlayerAvatarFile, applyTheme: store.applyTheme, saveUi: store.saveUi }
     },
   }
 

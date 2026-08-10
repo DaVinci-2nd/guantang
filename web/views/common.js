@@ -9,16 +9,16 @@
         return store.sessions.filter((s) => s.character_name === store.filterCharacter)
       })
       const filterOptions = computed(() => ['全部', ...store.sessionCharacters])
-      async function removeSession(id) {
-        if (!confirm('删除这个会话？')) return
-        await api.del(`/api/sessions/${id}`)
-        if (store.currentSessionId === id) {
-          store.currentSessionId = null
-          store.messages = []
-        }
-        await store.loadSessions()
+      async function renameSession(id) {
+        const s = store.sessions.find((x) => x.id === id)
+        if (!s) return
+        const name = prompt('重命名会话', s.title || '')
+        if (name === null) return
+        const updated = await api.put(`/api/sessions/${id}`, { title: name.trim() })
+        const idx = store.sessions.findIndex((x) => x.id === id)
+        if (idx >= 0) store.sessions[idx] = updated
       }
-      return { store, filteredSessions, filterOptions, removeSession, selectSession: store.selectSession, newSession: store.newSession }
+      return { store, filteredSessions, filterOptions, renameSession, selectSession: store.selectSession, newSession: store.newSession }
     },
   }
 
