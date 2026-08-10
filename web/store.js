@@ -74,7 +74,6 @@
     if (!s) { store.messages = []; return }
     const msgs = await api.get(`/api/sessions/${id}/messages`)
     store.messages = msgs.map((m) => ({ ...m, key: 'h' + m.id }))
-    store.filterCharacter = '全部'
   }
 
   async function newSession() {
@@ -91,7 +90,6 @@
     const updated = await api.put(`/api/sessions/${s.id}`, { character_name: roleName })
     const idx = store.sessions.findIndex((x) => x.id === s.id)
     store.sessions[idx] = updated
-    store.filterCharacter = '全部'
   }
 
   async function switchSessionMode(modeName) {
