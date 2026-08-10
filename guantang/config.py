@@ -69,3 +69,20 @@ class Config:
             u["sidebar_right"] = sidebar_right
         if centered is not None:
             u["centered"] = centered
+
+    def multimodal(self) -> dict:
+        m = self.data.get("multimodal") or {}
+        return {
+            "enabled": m.get("enabled", False),
+            "model": m.get("model", ""),
+            "prompt": m.get("prompt", ""),
+        }
+
+    def set_multimodal(self, enabled=None, model=None, prompt=None):
+        m = self.data.setdefault("multimodal", {})
+        if enabled is not None:
+            m["enabled"] = enabled
+        if model is not None:
+            m["model"] = model
+        if prompt is not None:
+            m["prompt"] = prompt

@@ -72,7 +72,7 @@
   const MessageBubble = {
     template: document.getElementById('tpl-message-bubble').innerHTML,
     props: ['msg', 'streaming'],
-    emits: ['regenerate', 'edit'],
+    emits: ['regenerate', 'edit', 'preview'],
     setup() {
       return { store }
     },
@@ -108,6 +108,11 @@
           () => store.notify('已复制', 'ok'),
           () => store.notify('复制失败')
         )
+      },
+      previewAttach(a) {
+        if (a.kind === 'text' && a.content) {
+          this.$emit('preview', { kind: 'text', name: a.name, content: a.content })
+        }
       },
     },
   }

@@ -383,6 +383,28 @@
         <button class="primary-btn" @click="savePlayer"><icon name="check"></icon><span>保存</span></button>
       </div>
     </div>
+    <div class="field card">
+      <span class="rules-title">多模态识别</span>
+      <em class="field-hint">启用后，消息中的图片会先交给下方指定的识别模型转为文字描述，再发送给当前角色模型（适配非多模态模型）</em>
+      <label class="field"><span>启用</span>
+        <select v-model="store.multimodal.enabled">
+          <option :value="true">开启</option>
+          <option :value="false">关闭</option>
+        </select>
+      </label>
+      <label class="field"><span>识别模型</span>
+        <select v-model="store.multimodal.model">
+          <option value="">未配置</option>
+          <option v-for="m in store.models" :key="m.name" :value="m.name">{{ m.name }}</option>
+        </select>
+      </label>
+      <div class="field"><span>识别提示词（手动填写，不内置）</span>
+        <textarea v-model="store.multimodal.prompt" rows="4" placeholder="例如：你是图片识别助手，请用中文详细描述这张图片的内容"></textarea>
+      </div>
+      <div class="modal-actions">
+        <button class="primary-btn" @click="saveMultimodal"><icon name="check"></icon><span>保存</span></button>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -430,9 +452,12 @@
         <pre v-if="showReasoning" class="reasoning-text">{{ msg.reasoning }}</pre>
       </div>
       <div v-if="msg.attachments && msg.attachments.length" class="msg-attachments">
-        <span v-for="(a, i) in msg.attachments" :key="i" class="attach-chip static">
-          <icon name="file_text"></icon><span class="attach-name">{{ a.name }}</span>
-        </span>
+        <template v-for="(a, i) in msg.attachments" :key="i">
+          <img v-if="a.kind === 'image' && a.url" class="msg-attach-img" :src="a.url" :alt="a.name" :title="a.name" @click="$emit('preview', { kind: 'image', name: a.name, url: a.url })"/>
+          <span v-else class="attach-chip static" @click="previewAttach(a)">
+            <icon name="file_text"></icon><span class="attach-name">{{ a.name }}</span>
+          </span>
+        </template>
       </div>
       <div v-if="msg.blocks && msg.blocks.length" class="msg-blocks">
         <template v-for="(b, i) in msg.blocks" :key="i">
@@ -540,36 +565,32 @@
       </div>
       <div class="chat-center" :class="{ centered: store.centered }">
         <div class="chat-list" ref="chatList">
-          <message-bubble v-for="m in store.messages" :key="m.key" :msg="m" :streaming="m.streaming" @regenerate="regenerate" @edit="openEdit"></message-bubble>
+          <message-bubble v-for="m in store.messages" :key="m.key" :msg="m" :streaming="m.streaming" @regenerate="regenerate" @edit="openEdit" @preview="openPreview"></message-bubble>
         </div>
       </div>
       <div class="chat-input-row">
         <div class="input-center" :class="{ centered: store.centered }">
           <div class="input-left">
-            <div v-if="attachments.length" class="attach-list">
-              <span v-for="(a, i) in attachments" :key="i" class="attach-chip">
-                <icon name="file_text"/><span class="attach-name">{{ a.name }}</span>
-                <button class="icon-btn small" title="移除" @click="attachments.splice(i, 1)"><icon name="x"></icon></button>
-              </span>
-            </div>
             <div class="input-bar">
               <button class="icon-btn" title="添加文件" @click="fileInput.click()">
                 <icon name="paperclip"></icon>
               </button>
               <input type="file" ref="fileInput" multiple style="display:none" @change="onFiles"/>
-              <textarea
+              <div
                 class="chat-input"
-                v-model="draft"
-                :placeholder="store.streaming ? '回复中…' : '输入消息，Enter 发送，Shift+Enter 换行'"
-                :disabled="store.streaming"
-                @keydown.enter.exact.prevent="send"
-              ></textarea>
+                ref="editorEl"
+                contenteditable="true"
+                :data-placeholder="store.streaming ? '回复中…' : '输入消息，Enter 发送，Shift+Enter 换行'"
+                @keydown="onEditorKeydown"
+                @paste="onEditorPaste"
+                @input="onEditorInput"
+              ></div>
             </div>
           </div>
           <button v-if="store.streaming" class="primary-btn send-btn abort" title="中断" @click="abortStream">
             <icon name="square"></icon>
           </button>
-          <button v-else class="primary-btn send-btn" :disabled="store.streaming || (!draft.trim() && !attachments.length)" @click="send">
+          <button v-else class="primary-btn send-btn" :disabled="!canSend" @click="send">
             <icon name="send"></icon>
           </button>
         </div>
@@ -589,6 +610,15 @@
             <button class="primary-btn" @click="saveEdit(false)"><span>确定</span></button>
           </template>
           <button class="ghost-btn" @click="closeEdit">取消</button>
+        </div>
+      </modal>
+      <modal v-if="previewTarget" :title="previewTarget.kind === 'image' ? previewTarget.name : '附件预览'" @close="previewTarget = null">
+        <div v-if="previewTarget.kind === 'image'" class="image-preview">
+          <img :src="previewTarget.url" :alt="previewTarget.name"/>
+        </div>
+        <pre v-else class="prompt-preview">{{ previewTarget.content }}</pre>
+        <div class="modal-actions">
+          <button class="ghost-btn" @click="previewTarget = null">关闭</button>
         </div>
       </modal>
       <modal v-if="debugData" title="会话数据预览" @close="debugData = null" wide>
@@ -620,6 +650,10 @@
           <div class="debug-section">
             <div class="debug-title">技能</div>
             <pre class="prompt-preview">{{ debugJson(debugData.skills) }}</pre>
+          </div>
+          <div class="debug-section">
+            <div class="debug-title">多模态识别配置</div>
+            <pre class="prompt-preview">{{ debugJson(debugData.multimodal) }}</pre>
           </div>
           <div class="debug-section">
             <div class="debug-title">消息记录</div>

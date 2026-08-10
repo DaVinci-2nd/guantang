@@ -1,5 +1,8 @@
+import base64
 import json
+import mimetypes
 import os
+import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
@@ -77,6 +80,7 @@ class MessagePayload(BaseModel):
 class ConfigPayload(BaseModel):
     player: dict | None = None
     ui: dict | None = None
+    multimodal: dict | None = None
 
 
 class AppContext:
@@ -173,12 +177,95 @@ class AppContext:
             model_name,
         )
 
-    @staticmethod
-    def history_to_openai(messages: list[dict]) -> list[dict]:
-        return [
-            {"role": "user" if m["sender"] == "player" else "assistant", "content": m["content"]}
-            for m in messages
+    def build_message_content(self, msg: dict) -> str | list:
+        text = msg.get("content") or ""
+        images = []
+        for att in msg.get("attachments") or []:
+            if att.get("kind") != "image" or att.get("recognized"):
+                continue
+            url = att.get("url") or ""
+            if not url.startswith("/files/data/attachments/"):
+                continue
+            path = self.cfg.root / url.removeprefix("/files/")
+            if not path.exists():
+                continue
+            mime = mimetypes.guess_type(path.name)[0] or "image/png"
+            b64 = base64.b64encode(path.read_bytes()).decode("ascii")
+            images.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
+        if not images:
+            return text
+        return [{"type": "text", "text": text}] + images
+
+    def history_to_openai(self, messages: list[dict]) -> list[dict]:
+        result = []
+        for m in messages:
+            if m["sender"] == "player":
+                result.append({"role": "user", "content": self.build_message_content(m)})
+            else:
+                result.append({"role": "assistant", "content": m["content"]})
+        return result
+
+    async def recognize_message_images(self, msg: dict) -> str | None:
+        mm = self.cfg.multimodal()
+        if not mm.get("enabled") or not mm.get("model") or not mm.get("prompt"):
+            return None
+        images = [
+            att for att in (msg.get("attachments") or [])
+            if att.get("kind") == "image" and not att.get("recognized")
         ]
+        if not images:
+            return None
+        model_def = self.models.get(mm["model"])
+        if not model_def:
+            return None
+        descriptions = []
+        for att in images:
+            url = att.get("url") or ""
+            if not url.startswith("/files/data/attachments/"):
+                continue
+            path = self.cfg.root / url.removeprefix("/files/")
+            if not path.exists():
+                continue
+            mime = mimetypes.guess_type(path.name)[0] or "image/png"
+            b64 = base64.b64encode(path.read_bytes()).decode("ascii")
+            provider = build_provider(
+                model_def,
+                self.cfg.api_key(model_def.get("api_key", "DEEPSEEK_API_KEY")),
+                timeout=self.cfg.get("timeout", 120),
+                max_retries=self.cfg.get("max_retries", 2),
+            )
+            try:
+                text = ""
+                async for event in provider.stream_chat(
+                    [
+                        {"role": "system", "content": mm["prompt"]},
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}
+                            ],
+                        },
+                    ]
+                ):
+                    if event[0] == "text":
+                        text += event[1]
+                desc = text.strip()
+                if desc:
+                    descriptions.append(f"【图片：{att.get('name', '图片')}】{desc}")
+            except Exception:
+                pass
+            finally:
+                await provider.close()
+        if not descriptions:
+            return None
+        attachments = list(msg.get("attachments") or [])
+        for att in attachments:
+            if att.get("kind") == "image" and not att.get("recognized"):
+                att["recognized"] = True
+        self.storage.update_message(
+            msg["session_id"], msg["id"], content=(msg.get("content") or "") + "\n\n" + "\n\n".join(descriptions), attachments=attachments
+        )
+        return msg["id"]
 
     def role_to_response(self, role: dict) -> dict:
         return {
@@ -218,6 +305,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             "session_characters": ctx.storage.session_characters(),
             "player": cfg.player(),
             "ui": cfg.ui(),
+            "multimodal": cfg.multimodal(),
         }
 
     @app.get("/api/roles")
@@ -472,8 +560,22 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             },
             "system_prompt": system_prompt,
             "skills": [mask_key(s) for s in skills],
+            "multimodal": cfg.multimodal(),
             "messages": ctx.storage.list_messages(session_id),
         }
+
+    @app.post("/api/files")
+    async def upload_file(file: UploadFile):
+        content = await file.read()
+        if not content:
+            raise HTTPException(400, "文件为空")
+        filename = file.filename or "file.bin"
+        suffix = Path(filename).suffix.lower() or ".bin"
+        upload_dir = cfg.root / "data" / "attachments"
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        name = f"{uuid.uuid4().hex}{suffix}"
+        (upload_dir / name).write_bytes(content)
+        return {"url": f"/files/data/attachments/{name}", "name": name}
 
     @app.get("/api/thinking-presets")
     async def thinking_presets():
@@ -504,7 +606,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     @app.get("/api/config")
     async def get_config():
-        return {"player": cfg.player(), "ui": cfg.ui()}
+        return {"player": cfg.player(), "ui": cfg.ui(), "multimodal": cfg.multimodal()}
 
     @app.put("/api/config")
     async def update_config(payload: ConfigPayload):
@@ -517,8 +619,14 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 sidebar_right=payload.ui.get("sidebar_right"),
                 centered=payload.ui.get("centered"),
             )
+        if payload.multimodal is not None:
+            cfg.set_multimodal(
+                enabled=payload.multimodal.get("enabled"),
+                model=payload.multimodal.get("model"),
+                prompt=payload.multimodal.get("prompt"),
+            )
         cfg.save()
-        return {"player": cfg.player(), "ui": cfg.ui()}
+        return {"player": cfg.player(), "ui": cfg.ui(), "multimodal": cfg.multimodal()}
 
     @app.websocket("/ws/chat")
     async def ws_chat(ws: WebSocket):
@@ -545,7 +653,17 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                     role.get("thinking_mode", ""),
                     role.get("thinking_custom", ""),
                 )
-                history = ctx.history_to_openai(ctx.storage.list_messages(session_id))
+                history_messages = ctx.storage.list_messages(session_id)
+                if history_messages and history_messages[-1]["sender"] == "player":
+                    recognized_id = await ctx.recognize_message_images(history_messages[-1])
+                    if recognized_id:
+                        updated = ctx.storage.get_message(session_id, recognized_id)
+                        history_messages = ctx.storage.list_messages(session_id)
+                        try:
+                            await ws.send_json({"type": "recognized", "message": updated})
+                        except WebSocketDisconnect:
+                            raise
+                history = ctx.history_to_openai(history_messages)
                 reasoning = ""
                 reply = ""
                 tool_events = []

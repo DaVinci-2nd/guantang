@@ -20,6 +20,7 @@
     filterCharacter: '全部',
     messages: [],
     player: { name: '', avatar: '' },
+    multimodal: { enabled: false, model: '', prompt: '' },
     streaming: false,
     ws: null,
     notify: { text: '', kind: '' },
@@ -43,6 +44,7 @@
     store.sessions = data.sessions
     store.sessionCharacters = data.session_characters
     store.player = data.player
+    store.multimodal = data.multimodal || { enabled: false, model: '', prompt: '' }
     store.theme = data.ui.theme
     store.leftOpen = data.ui.sidebar_left
     store.rightOpen = data.ui.sidebar_right

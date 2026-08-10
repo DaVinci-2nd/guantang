@@ -21,6 +21,16 @@
         }
       }
 
+      async function saveMultimodal() {
+        try {
+          await api.put('/api/config', { multimodal: { ...store.multimodal } })
+          await store.loadState()
+          store.notify('已保存', 'ok')
+        } catch (e) {
+          store.notify(e.message)
+        }
+      }
+
       function uploadPlayerAvatar() {
         if (playerAvatarFile.value) playerAvatarFile.value.click()
       }
@@ -41,7 +51,7 @@
         }
       }
 
-      return { store, playerName, playerAvatar, playerAvatarFile, savePlayer, uploadPlayerAvatar, onPlayerAvatarFile, applyTheme: store.applyTheme, saveUi: store.saveUi }
+      return { store, playerName, playerAvatar, playerAvatarFile, savePlayer, saveMultimodal, uploadPlayerAvatar, onPlayerAvatarFile, applyTheme: store.applyTheme, saveUi: store.saveUi }
     },
   }
 

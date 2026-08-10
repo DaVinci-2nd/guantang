@@ -15,6 +15,11 @@ ui:
   sidebar_right: true
   centered: true
 
+multimodal:
+  enabled: false
+  model: ""
+  prompt: ""
+
 system_prompt_file: prompts/system.md
 rules_file: prompts/rules.md
 translator_file: prompts/translator.md

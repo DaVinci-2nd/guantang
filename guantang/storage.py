@@ -135,7 +135,7 @@ class Storage:
             row = conn.execute("SELECT * FROM messages WHERE id = ?", (cur.lastrowid,)).fetchone()
             return self._row_to_message(row)
 
-    def update_message(self, session_id: int, message_id: int, content: str | None = None, blocks: list | None = None) -> dict | None:
+    def update_message(self, session_id: int, message_id: int, content: str | None = None, blocks: list | None = None, attachments: list | None = None) -> dict | None:
         fields = []
         values = []
         if content is not None:
@@ -144,6 +144,9 @@ class Storage:
         if blocks is not None:
             fields.append("blocks = ?")
             values.append(json.dumps(blocks, ensure_ascii=False))
+        if attachments is not None:
+            fields.append("attachments = ?")
+            values.append(json.dumps(attachments, ensure_ascii=False))
         if not fields:
             return self.get_message(session_id, message_id)
         values.append(message_id)

@@ -2,17 +2,20 @@
   const { reactive, ref, computed, watch, nextTick } = Vue
 
   let keySeq = 0
+  let attSeq = 0
 
   const ChatPage = {
     template: document.getElementById('tpl-chat-page').innerHTML,
     setup() {
-      const draft = ref('')
       const chatList = ref(null)
-      const attachments = ref([])
+      const editorEl = ref(null)
       const fileInput = ref(null)
       const editTarget = ref(null)
       const editText = ref('')
       const debugData = ref(null)
+      const previewTarget = ref(null)
+      const editorDirty = ref(false)
+      const editingAtts = ref([])
 
       let activeWs = null
       let activeAiMsg = null
@@ -28,6 +31,8 @@
       })
 
       const filterOptions = computed(() => ['全部', ...store.sessionCharacters])
+
+      const canSend = computed(() => editorDirty.value || editingAtts.value.length > 0)
 
       function nearBottom() {
         const el = chatList.value
@@ -50,38 +55,232 @@
         return store.currentSession()
       }
 
+      function svgHtml(name, size) {
+        const s = size || 14
+        return `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${window.ICONS[name] || ''}</svg>`
+      }
+
+      function isImageFile(name) {
+        return /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/i.test(name)
+      }
+
+      function makeThumb(file) {
+        return new Promise((resolve) => {
+          const img = new Image()
+          const url = URL.createObjectURL(file)
+          img.onload = () => {
+            const max = 160
+            let w = img.width
+            let h = img.height
+            if (w > max || h > max) {
+              const ratio = Math.min(max / w, max / h)
+              w = Math.round(w * ratio)
+              h = Math.round(h * ratio)
+            }
+            const canvas = document.createElement('canvas')
+            canvas.width = w
+            canvas.height = h
+            const ctx = canvas.getContext('2d')
+            ctx.drawImage(img, 0, 0, w, h)
+            URL.revokeObjectURL(url)
+            resolve(canvas.toDataURL('image/png'))
+          }
+          img.onerror = () => {
+            URL.revokeObjectURL(url)
+            resolve('')
+          }
+          img.src = url
+        })
+      }
+
+      function markDirty() {
+        editorDirty.value = true
+      }
+
+      function insertAttachTag(item) {
+        const el = editorEl.value
+        if (!el) return
+        el.focus()
+        const span = document.createElement('span')
+        span.className = 'attach-inline'
+        span.contentEditable = 'false'
+        span.dataset.aid = String(item.id)
+        if (item.kind === 'image' && item.thumb) {
+          const img = document.createElement('img')
+          img.className = 'attach-thumb'
+          img.src = item.thumb
+          img.alt = item.name
+          span.appendChild(img)
+          const name = document.createElement('span')
+          name.className = 'attach-inline-name'
+          name.textContent = item.name
+          span.appendChild(name)
+        } else {
+          const icon = document.createElement('span')
+          icon.className = 'attach-inline-icon'
+          icon.innerHTML = svgHtml(item.kind === 'image' ? 'image' : 'file_text')
+          span.appendChild(icon)
+          const name = document.createElement('span')
+          name.className = 'attach-inline-name'
+          name.textContent = item.name
+          span.appendChild(name)
+        }
+        const del = document.createElement('button')
+        del.className = 'icon-btn small attach-inline-del'
+        del.title = '移除'
+        del.innerHTML = svgHtml('x', 12)
+        span.appendChild(del)
+        span.addEventListener('click', (ev) => {
+          if (ev.target.closest('.attach-inline-del')) return
+          previewAttach(item)
+        })
+        del.addEventListener('click', (ev) => {
+          ev.stopPropagation()
+          span.remove()
+          const idx = editingAtts.value.findIndex((a) => a.id === item.id)
+          if (idx >= 0) editingAtts.value.splice(idx, 1)
+          markDirty()
+        })
+        const sel = window.getSelection()
+        if (sel && sel.rangeCount) {
+          const range = sel.getRangeAt(0)
+          range.collapse(false)
+          range.insertNode(span)
+          const after = document.createRange()
+          after.setStartAfter(span)
+          after.collapse(true)
+          sel.removeAllRanges()
+          sel.addRange(after)
+        } else {
+          el.appendChild(span)
+        }
+        markDirty()
+      }
+
       async function onFiles(e) {
         const files = [...e.target.files]
         e.target.value = ''
         for (const f of files) {
-          const item = { name: f.name, size: f.size, readable: false, content: '' }
-          if (f.size <= 2 * 1024 * 1024) {
-            try {
-              const buf = await f.arrayBuffer()
-              new TextDecoder('utf-8', { fatal: true }).decode(buf)
-              item.content = new TextDecoder('utf-8').decode(buf)
-              item.readable = true
-            } catch (err) {
-              item.readable = false
+          if (isImageFile(f.name)) {
+            const item = {
+              id: attSeq++, name: f.name, size: f.size, kind: 'image',
+              readable: true, content: '', file: f, thumb: await makeThumb(f), url: '',
             }
+            editingAtts.value.push(item)
+            insertAttachTag(item)
+          } else {
+            let readable = false
+            let content = ''
+            if (f.size <= 2 * 1024 * 1024) {
+              try {
+                const buf = await f.arrayBuffer()
+                new TextDecoder('utf-8', { fatal: true }).decode(buf)
+                content = new TextDecoder('utf-8').decode(buf)
+                readable = true
+              } catch (err) {
+                readable = false
+              }
+            }
+            const item = {
+              id: attSeq++, name: f.name, size: f.size, kind: readable ? 'text' : 'binary',
+              readable, content, file: null, thumb: '', url: '',
+            }
+            editingAtts.value.push(item)
+            insertAttachTag(item)
           }
-          attachments.value.push(item)
         }
       }
 
-      function buildContent(text, attList) {
-        let content = text
-        if (attList && attList.length) {
-          const parts = attList.map((a) =>
-            a.readable ? `【附件：${a.name}】\n${a.content}` : `【附件：${a.name}】（二进制文件，内容无法直接读取）`
-          )
-          content = text ? text + '\n\n' + parts.join('\n\n') : parts.join('\n\n')
+      function previewAttach(item) {
+        if (item.kind === 'text' && item.content) {
+          previewTarget.value = { kind: 'text', name: item.name, content: item.content }
+        } else if (item.kind === 'image') {
+          const url = item.thumb || (item.file ? URL.createObjectURL(item.file) : '')
+          if (url) previewTarget.value = { kind: 'image', name: item.name, url }
         }
-        return content
       }
 
-      function buildAttachMeta(attList) {
-        return (attList || []).map((a) => ({ name: a.name, size: a.size, readable: a.readable }))
+      function openPreview(payload) {
+        if (payload.kind === 'image' && payload.url) {
+          previewTarget.value = { kind: 'image', name: payload.name, url: payload.url }
+        } else if (payload.kind === 'text' && payload.content) {
+          previewTarget.value = { kind: 'text', name: payload.name, content: payload.content }
+        }
+      }
+
+      function extractEditorContent() {
+        const el = editorEl.value
+        let text = ''
+        if (!el) return { text, atts: editingAtts.value }
+        function walk(node) {
+          node.childNodes.forEach((child) => {
+            if (child.nodeType === Node.TEXT_NODE) {
+              text += child.textContent
+            } else if (child.nodeType === Node.ELEMENT_NODE) {
+              if (child.classList && child.classList.contains('attach-inline')) {
+                const item = editingAtts.value.find((a) => a.id === Number(child.dataset.aid))
+                if (item) {
+                  if (item.kind === 'text') {
+                    text += `【附件：${item.name}】\n${item.content}`
+                  } else if (item.kind === 'image') {
+                    text += `【图片：${item.name}】`
+                  } else {
+                    text += `【附件：${item.name}】（二进制文件，内容无法直接读取）`
+                  }
+                }
+              } else {
+                walk(child)
+              }
+            }
+          })
+        }
+        walk(el)
+        return { text, atts: editingAtts.value }
+      }
+
+      function clearEditor() {
+        if (editorEl.value) editorEl.value.innerHTML = ''
+        editingAtts.value = []
+        editorDirty.value = false
+      }
+
+      function onEditorKeydown(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault()
+          send()
+        }
+      }
+
+      function onEditorPaste(e) {
+        e.preventDefault()
+        const text = e.clipboardData.getData('text/plain')
+        if (text) document.execCommand('insertText', false, text)
+        markDirty()
+      }
+
+      async function send() {
+        if (store.streaming) return
+        const { text, atts } = extractEditorContent()
+        if (!text.trim() && !atts.length) return
+        const meta = []
+        for (const a of atts) {
+          if (a.kind === 'image') {
+            if (!a.url) {
+              try {
+                const res = await api.upload('/api/files', a.file)
+                a.url = res.url
+              } catch (e) {
+                store.notify('图片上传失败：' + e.message)
+                return
+              }
+            }
+            meta.push({ name: a.name, size: a.size, kind: 'image', readable: true, url: a.url })
+          } else {
+            meta.push({ name: a.name, size: a.size, kind: a.kind, readable: a.readable, content: a.readable ? a.content : '' })
+          }
+        }
+        clearEditor()
+        await sendContent(text, meta, store.currentSessionId)
       }
 
       async function sendContent(content, attList, sessionId, persistPlayer = true) {
@@ -90,10 +289,9 @@
         if (!sid) return
         store.streaming = true
         if (persistPlayer) {
-          const meta = buildAttachMeta(attList)
           let saved
           try {
-            saved = await api.post(`/api/sessions/${sid}/messages`, { content, attachments: meta })
+            saved = await api.post(`/api/sessions/${sid}/messages`, { content, attachments: attList || [] })
           } catch (e) {
             store.streaming = false
             store.notify(e.message)
@@ -132,6 +330,13 @@
             if (last && last.type === 'text') last.text += data.delta
             else aiMsg.blocks.push({ type: 'text', text: data.delta })
             scrollBottom()
+          } else if (data.type === 'recognized') {
+            const m = data.message
+            const idx = store.messages.findIndex((x) => x.id === m.id)
+            if (idx >= 0) {
+              store.messages[idx].content = m.content
+              store.messages[idx].attachments = m.attachments
+            }
           } else if (data.type === 'tool_call') {
             aiMsg.tool_events.push({ name: data.name, arguments: data.arguments, result: '' })
             aiMsg.blocks.push({ type: 'tool', name: data.name, arguments: data.arguments, status: 'running', result: '', open: false })
@@ -186,15 +391,6 @@
         ws.onopen = () => {
           ws.send(JSON.stringify({ session_id: sid, message: content }))
         }
-      }
-
-      async function send() {
-        const text = draft.value.trim()
-        if ((!text && !attachments.value.length) || store.streaming) return
-        const content = buildContent(text, attachments.value)
-        draft.value = ''
-        attachments.value = []
-        await sendContent(content, [], store.currentSessionId)
       }
 
       function abortStream() {
@@ -326,11 +522,12 @@
       watch(() => store.currentSessionId, () => scrollBottom(true))
 
       return {
-        store, draft, chatList, filteredSessions, modeOptions, filterOptions,
+        store, chatList, editorEl, fileInput, filteredSessions, modeOptions, filterOptions,
         currentRole, currentSession, newSession, removeSession, clearSession, formatTime,
-        renderMarkdown, onModeChange, send, attachments, onFiles, fileInput, toggleCentered,
+        renderMarkdown, onModeChange, send, onFiles, toggleCentered, canSend,
         abortStream, regenerate, editTarget, editText, openEdit, closeEdit, saveEdit,
-        debugData, showDebug, debugJson,
+        debugData, showDebug, debugJson, previewTarget, openPreview,
+        onEditorKeydown, onEditorPaste, onEditorInput: markDirty,
       }
     },
   }

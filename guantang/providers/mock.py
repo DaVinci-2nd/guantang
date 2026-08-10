@@ -14,6 +14,13 @@ class MockProvider(BaseProvider):
     async def stream_chat(self, messages, tools=None, temperature=None, max_tokens=None, thinking=None):
         last = messages[-1]
         content = last.get("content") or ""
+        if isinstance(content, list):
+            text_parts = [
+                p.get("text", "")
+                for p in content
+                if isinstance(p, dict) and p.get("type") == "text"
+            ]
+            content = "\n".join(text_parts)
         if last.get("role") == "tool":
             yield ("reasoning", "（模拟）工具结果已经拿到，整理一下再回复。")
             yield ("text", "工具执行完毕，结果我已经收到，一切正常喵。")
