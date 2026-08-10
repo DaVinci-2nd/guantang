@@ -1,16 +1,19 @@
 provider: openai
-default_model: ''
+default_model: ""
 timeout: 120
 max_retries: 2
 temperature: 1.0
 max_tokens: 4096
+
 player:
-  name: ''
-  avatar: ''
+  name: ""
+  avatar: ""
+
 ui:
   theme: dark
   sidebar_left: true
   sidebar_right: true
+
 system_prompt_file: prompts/system.md
 rules_file: prompts/rules.md
 translator_file: prompts/translator.md

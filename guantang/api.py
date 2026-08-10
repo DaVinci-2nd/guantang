@@ -19,6 +19,7 @@ from .providers.factory import build_provider
 from .roles import RoleStore
 from .skills import SkillStore
 from .storage import Storage
+from .thinking_presets import THINKING_PRESETS, build_thinking
 from .zh_translator import ZhTranslator
 
 
@@ -26,8 +27,9 @@ class RolePayload(BaseModel):
     name: str
     avatar: str = ""
     model: str = ""
-    thinking_mode: str = "chat"
+    thinking_mode: str = ""
     thinking_strength: str = "medium"
+    thinking_custom: str = ""
     temperature: float | None = 1.0
     max_tokens: int | None = 4096
     skills: list[str] = Field(default_factory=list)
@@ -43,6 +45,9 @@ class SkillPayload(BaseModel):
     args: list[str] = Field(default_factory=list)
     env: dict | None = None
     enabled: bool = True
+    provider: str = "tavily"
+    api_key: str = ""
+    base_url: str = ""
 
 
 class ModePayload(BaseModel):
@@ -97,8 +102,18 @@ class AppContext:
             if n in all_skills and all_skills[n].get("type", "mcp") == "mcp" and all_skills[n].get("enabled", True)
         ]
 
-    async def ensure(self, model_def: dict, skill_defs: list[dict]):
-        key = (model_def.get("name"), tuple(s["name"] for s in skill_defs))
+    def resolve_search_skills(self, role: dict) -> list[dict]:
+        chosen = set(role.get("skills") or [])
+        all_skills = {s["name"]: s for s in self.skills.list()}
+        return [
+            all_skills[n]
+            for n in chosen
+            if n in all_skills and all_skills[n].get("type") == "search" and all_skills[n].get("enabled", True)
+        ]
+
+    async def ensure(self, model_def: dict, skill_defs: list[dict], search_defs: list[dict] | None = None):
+        search_defs = search_defs or []
+        key = (model_def.get("name"), tuple(s["name"] for s in skill_defs), tuple(s["name"] for s in search_defs))
         if self.provider_key == key:
             return
         if self.provider:
@@ -123,6 +138,7 @@ class AppContext:
             translator,
             temperature=self.cfg.get("temperature"),
             max_tokens=self.cfg.get("max_tokens"),
+            search_skills=search_defs,
         )
         self.provider_key = key
 
@@ -138,17 +154,19 @@ class AppContext:
             raise HTTPException(400, f"角色引用的模型不存在：{role.get('model')}")
         return session, role, model_def
 
-    def build_system(self, session: dict, role: dict) -> str:
+    def build_system(self, session: dict, role: dict, model_def: dict | None = None) -> str:
         mode_text = ""
         if session.get("mode"):
             mode = self.modes.get(session["mode"])
             if mode:
                 mode_text = mode.get("content", "")
+        model_name = model_def.get("model", "") if model_def else ""
         return self.assembler.build_system_prompt(
             role.get("setting", ""),
             role["name"],
             self.cfg.player()["name"],
             mode_text,
+            model_name,
         )
 
     @staticmethod
@@ -161,7 +179,7 @@ class AppContext:
     def role_to_response(self, role: dict) -> dict:
         return {
             k: role.get(k)
-            for k in ["name", "avatar", "model", "thinking_mode", "thinking_strength", "temperature", "max_tokens", "skills", "modes", "default_mode", "setting", "has_avatar_file"]
+            for k in ["name", "avatar", "model", "thinking_mode", "thinking_strength", "thinking_custom", "temperature", "max_tokens", "skills", "modes", "default_mode", "setting", "has_avatar_file"]
         }
 
 
@@ -175,6 +193,13 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def no_cache_static(request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/static") or request.url.path == "/":
+            response.headers["Cache-Control"] = "no-cache"
+        return response
     app.state.ctx = ctx
 
     @app.get("/api/state")
@@ -184,6 +209,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             "skills": ctx.skills.list(),
             "modes": ctx.modes.list(),
             "models": ctx.models.list(),
+            "thinking_presets": THINKING_PRESETS,
             "sessions": ctx.storage.list_sessions(),
             "session_characters": ctx.storage.session_characters(),
             "player": cfg.player(),
@@ -238,9 +264,17 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             m = ctx.modes.get(mode)
             if m:
                 mode_text = m.get("content", "")
+        model_def = ctx.models.get(role.get("model") or "")
+        model_name = model_def.get("model", "") if model_def else ""
         return {"system_prompt": ctx.assembler.build_system_prompt(
-            role.get("setting", ""), role["name"], cfg.player()["name"], mode_text
+            role.get("setting", ""), role["name"], cfg.player()["name"], mode_text, model_name
         )}
+
+    @app.get("/api/variables")
+    async def variables():
+        from .variables import GROUPS, VARIABLE_LIST
+
+        return {"variables": VARIABLE_LIST, "groups": GROUPS}
 
     @app.get("/api/skills")
     async def list_skills():
@@ -370,6 +404,10 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
         return {"ok": True}
 
+    @app.get("/api/thinking-presets")
+    async def thinking_presets():
+        return {"presets": THINKING_PRESETS}
+
     @app.get("/api/rules")
     async def rules():
         return {"text": ""}
@@ -427,14 +465,20 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                     await ws.send_json({"type": "error", "text": e.detail})
                     continue
                 skill_defs = ctx.resolve_skills(role)
-                await ctx.ensure(model_def, skill_defs)
-                system = ctx.build_system(session, role)
+                search_defs = ctx.resolve_search_skills(role)
+                await ctx.ensure(model_def, skill_defs, search_defs)
+                system = ctx.build_system(session, role, model_def)
+                thinking = build_thinking(
+                    model_def.get("model", ""),
+                    role.get("thinking_mode", ""),
+                    role.get("thinking_custom", ""),
+                )
                 history = ctx.history_to_openai(ctx.storage.list_messages(session_id))
                 reasoning = ""
                 reply = ""
                 tool_events = []
                 try:
-                    async for event in ctx.engine.run_messages(system, history):
+                    async for event in ctx.engine.run_messages(system, history, thinking=thinking):
                         kind = event[0]
                         if kind == "reasoning":
                             reasoning += event[1]

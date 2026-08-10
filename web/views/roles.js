@@ -1,5 +1,5 @@
 (function () {
-  const { ref } = Vue
+  const { ref, computed, watch } = Vue
 
   const RolesPage = {
     template: document.getElementById('tpl-roles').innerHTML,
@@ -8,10 +8,16 @@
       const preview = ref('')
       const avatarFile = ref(null)
 
+      const thinkingPreset = computed(() => {
+        if (!editor.value || !editor.value.model) return null
+        const name = editor.value.model.toLowerCase()
+        return store.thinkingPresets.find((p) => p.match.some((k) => name.includes(k))) || null
+      })
+
       function blankEditor() {
         return {
           name: '', avatar: '', model: '',
-          thinking_mode: 'chat', thinking_strength: 'medium',
+          thinking_mode: '', thinking_strength: 'medium', thinking_custom: '',
           temperature: 1.0, max_tokens: 4096,
           skills: [], modes: [], default_mode: '',
           setting: '',
@@ -20,7 +26,18 @@
 
       function openEditor(role) {
         editor.value = role ? { ...role, _orig: role.name, skills: [...(role.skills || [])], modes: [...(role.modes || [])] } : blankEditor()
+        if (!editor.value.thinking_mode && thinkingPreset.value) {
+          editor.value.thinking_mode = thinkingPreset.value.default || ''
+        }
       }
+
+      watch(thinkingPreset, (preset) => {
+        if (!editor.value || !preset) return
+        const valid = preset.options.map((o) => o.value)
+        if (!editor.value.thinking_mode || !valid.includes(editor.value.thinking_mode)) {
+          editor.value.thinking_mode = preset.default || ''
+        }
+      })
 
       async function saveRole() {
         const data = { ...editor.value }
@@ -70,7 +87,11 @@
         }
       }
 
-      return { store, editor, preview, avatarFile, openEditor, saveRole, removeRole, uploadAvatar, onAvatarFile, previewPrompt }
+      function renderMarkdown(text) {
+        try { return marked.parse(text || '') } catch (e) { return text || '' }
+      }
+
+      return { store, editor, preview, avatarFile, thinkingPreset, openEditor, saveRole, removeRole, uploadAvatar, onAvatarFile, previewPrompt, renderMarkdown }
     },
   }
 

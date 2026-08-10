@@ -11,7 +11,7 @@ class MockProvider(BaseProvider):
     def __init__(self, model: str = "mock-chat", timeout: int = 30, max_retries: int = 0):
         super().__init__("http://mock.local", "mock", model=model, timeout=timeout, max_retries=max_retries)
 
-    async def stream_chat(self, messages, tools=None, temperature=None, max_tokens=None):
+    async def stream_chat(self, messages, tools=None, temperature=None, max_tokens=None, thinking=None):
         last = messages[-1]
         content = last.get("content") or ""
         if last.get("role") == "tool":

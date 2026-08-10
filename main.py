@@ -111,7 +111,7 @@ async def main():
     )
     player_name = cfg.player()["name"]
     system_md = assembler.cli_system_text()
-    system_prompt = assembler.build_system_prompt(system_md, "灌汤", player_name)
+    system_prompt = assembler.build_system_prompt(system_md, "灌汤", player_name, model_name=provider.model)
     try:
         await chat_loop(engine, system_prompt, player_name)
     finally:

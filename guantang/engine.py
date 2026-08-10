@@ -2,7 +2,24 @@ import json
 
 from .mcp_client import MCPManager
 from .providers.base import ToolCall
+from .search import search
 from .zh_translator import ZhTranslator
+
+WEB_SEARCH_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "web_search",
+        "description": "联网搜索互联网获取实时信息。当需要查询最新新闻、实时动态、事实验证或模型自身知识无法覆盖的内容时使用。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "搜索关键词或完整问题"},
+                "max_results": {"type": "integer", "description": "返回结果数量，默认 5，最大 10"},
+            },
+            "required": ["query"],
+        },
+    },
+}
 
 
 class Engine:
@@ -13,20 +30,22 @@ class Engine:
         translator: ZhTranslator,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        search_skills: list[dict] | None = None,
     ):
         self.provider = provider
         self.mcp = mcp
         self.translator = translator
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.search_skills = search_skills or []
 
-    async def run(self, system_prompt: str, player_message: str, history: list[dict] | None = None):
+    async def run(self, system_prompt: str, player_message: str, history: list[dict] | None = None, thinking=None):
         messages = list(history or [])
         messages.append({"role": "user", "content": player_message})
-        async for event in self.run_messages(system_prompt, messages):
+        async for event in self.run_messages(system_prompt, messages, thinking=thinking):
             yield event
 
-    async def run_messages(self, system_prompt: str, messages: list[dict]):
+    async def run_messages(self, system_prompt: str, messages: list[dict], thinking=None):
         messages = [{"role": "system", "content": system_prompt}] + list(messages)
 
         while True:
@@ -39,6 +58,7 @@ class Engine:
                 tools=openai_tools,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
+                thinking=thinking,
             ):
                 if event[0] in ("reasoning", "text"):
                     if event[0] == "text":
@@ -59,13 +79,35 @@ class Engine:
             messages.append(self._assistant_tool_message(tool_calls))
             for tc in tool_calls:
                 yield ("tool_exec", tc.name, tc.arguments)
-                result = await self.mcp.call_tool(tc.name, tc.arguments)
+                if tc.name == "web_search":
+                    result = await self._call_web_search(tc.arguments)
+                else:
+                    result = await self.mcp.call_tool(tc.name, tc.arguments)
                 yield ("tool_result", tc.name, result)
                 messages.append(
                     {"role": "tool", "tool_call_id": tc.id, "name": tc.name, "content": result}
                 )
 
         yield ("end", messages)
+
+    async def _call_web_search(self, arguments: dict) -> str:
+        query = str(arguments.get("query") or "").strip()
+        if not query:
+            return "搜索失败：缺少搜索关键词"
+        try:
+            max_results = int(arguments.get("max_results") or 5)
+        except (TypeError, ValueError):
+            max_results = 5
+        max_results = max(1, min(max_results, 10))
+        skill = self.search_skills[0] if self.search_skills else {}
+        result = await search(
+            skill.get("provider", "tavily"),
+            query,
+            skill.get("api_key", ""),
+            skill.get("base_url", ""),
+            max_results,
+        )
+        return result[:4000]
 
     async def _build_openai_tools(self) -> list[dict]:
         result = []
@@ -76,6 +118,8 @@ class Engine:
             seen.add(tool["name"])
             zh = await self.translator.translate_tool(tool)
             result.append(self.translator.to_openai_tool(tool, zh))
+        if self.search_skills and "web_search" not in seen:
+            result.append(WEB_SEARCH_TOOL)
         return result
 
     @staticmethod

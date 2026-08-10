@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from .variables import build_values, render
+
 
 class PromptAssembler:
     def __init__(self, root: Path):
@@ -19,8 +21,7 @@ class PromptAssembler:
 
     @staticmethod
     def render_markers(text: str, role_name: str, player_name: str) -> str:
-        text = text.replace("{{角色名}}", role_name).replace("{{角色}}", role_name)
-        return text.replace("{{玩家名}}", player_name).replace("{{玩家}}", player_name)
+        return render(text, build_values(role_name=role_name, player_name=player_name))
 
     def build_system_prompt(
         self,
@@ -28,10 +29,12 @@ class PromptAssembler:
         role_name: str,
         player_name: str,
         mode_text: str = "",
+        model_name: str = "",
     ) -> str:
+        values = build_values(model_name=model_name, role_name=role_name, player_name=player_name)
         parts = []
         if role_setting.strip():
-            parts.append(self.render_markers(role_setting, role_name, player_name))
+            parts.append(render(role_setting, values))
         if mode_text.strip():
-            parts.append(self.render_markers(mode_text, role_name, player_name))
+            parts.append(render(mode_text, values))
         return "\n\n".join(parts)

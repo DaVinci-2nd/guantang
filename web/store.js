@@ -10,6 +10,9 @@
     skills: [],
     modes: [],
     models: [],
+    thinkingPresets: [],
+    variables: [],
+    variableGroups: {},
     sessions: [],
     sessionCharacters: [],
     currentSessionId: null,
@@ -32,6 +35,10 @@
     store.skills = data.skills
     store.modes = data.modes
     store.models = data.models
+    store.thinkingPresets = data.thinking_presets || []
+    const v = await api.get('/api/variables')
+    store.variables = v.variables || []
+    store.variableGroups = v.groups || {}
     store.sessions = data.sessions
     store.sessionCharacters = data.session_characters
     store.player = data.player

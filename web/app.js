@@ -65,6 +65,7 @@
     app.component('player-avatar', window.GTComponents.PlayerAvatar)
     app.component('modal', window.GTComponents.Modal)
     app.component('message-bubble', window.GTComponents.MessageBubble)
+    app.component('variables-menu', window.GTComponents.VariablesMenu)
     app.component('chat-page', window.ChatPage)
     app.mount('#app')
   }

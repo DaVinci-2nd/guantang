@@ -13,7 +13,12 @@ class Config:
         self.path = Path(path) if path else BASE_DIR / "config.yaml"
         self.path = self.path.resolve()
         self.root = self.path.parent
-        with open(self.path, encoding="utf-8") as f:
+        source = self.path
+        if not source.exists():
+            example = self.root / "config.example.yaml"
+            if example.exists():
+                source = example
+        with open(source, encoding="utf-8") as f:
             self.data = yaml.safe_load(f) or {}
 
     def __getattr__(self, name):

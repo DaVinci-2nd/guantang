@@ -3,7 +3,7 @@ from pathlib import Path
 
 import yaml
 
-YAML_FIELDS = ["name", "avatar", "model", "thinking_mode", "thinking_strength", "temperature", "max_tokens", "skills", "modes", "default_mode"]
+YAML_FIELDS = ["name", "avatar", "model", "thinking_mode", "thinking_strength", "thinking_custom", "temperature", "max_tokens", "skills", "modes", "default_mode"]
 
 INVALID_NAME_CHARS = set('/\\:*?"<>|')
 

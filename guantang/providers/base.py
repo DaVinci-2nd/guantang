@@ -38,7 +38,7 @@ class BaseProvider:
     def _headers(self) -> dict:
         return {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
 
-    def _payload(self, messages, tools, temperature, max_tokens, stream: bool = True) -> dict:
+    def _payload(self, messages, tools, temperature, max_tokens, stream: bool = True, thinking=None) -> dict:
         payload = {"model": self.model, "messages": messages, "stream": stream}
         if tools:
             payload["tools"] = tools
@@ -46,9 +46,12 @@ class BaseProvider:
             payload["temperature"] = temperature
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
+        if thinking:
+            for key, value in thinking.items():
+                payload[key] = value
         return payload
 
-    async def stream_chat(self, messages, tools=None, temperature=None, max_tokens=None):
+    async def stream_chat(self, messages, tools=None, temperature=None, max_tokens=None, thinking=None):
         accum = {}
         last_error = None
         for attempt in range(self.max_retries + 1):
@@ -57,7 +60,7 @@ class BaseProvider:
                     "POST",
                     self.endpoint,
                     headers=self._headers(),
-                    json=self._payload(messages, tools, temperature, max_tokens),
+                    json=self._payload(messages, tools, temperature, max_tokens, thinking=thinking),
                 ) as resp:
                     if resp.status_code != 200:
                         body = (await resp.aread()).decode("utf-8", errors="replace")

@@ -96,5 +96,40 @@
     },
   }
 
-  window.GTComponents = { ChatList, RightRoleList, RoleAvatar, PlayerAvatar, Modal, MessageBubble }
+  const VariablesMenu = {
+    template: document.getElementById('tpl-variables-menu').innerHTML,
+    setup() {
+      return { store }
+    },
+    data() {
+      return { open: false }
+    },
+    computed: {
+      groupOrder() {
+        return ['context', 'datetime', 'hardware']
+      },
+    },
+    methods: {
+      groupItems(group) {
+        return store.variables.filter((v) => v.group === group)
+      },
+      tokenText(item) {
+        return item.keys.map((k) => '{{' + k + '}}').join(' / ')
+      },
+      insert(item) {
+        const ta = this.$el.parentElement.querySelector('textarea')
+        if (!ta) return
+        const token = '{{' + item.keys[0] + '}}'
+        const start = ta.selectionStart ?? ta.value.length
+        const end = ta.selectionEnd ?? ta.value.length
+        ta.setRangeText(token, start, end, 'end')
+        ta.dispatchEvent(new Event('input'))
+        ta.focus()
+        const pos = start + token.length
+        ta.setSelectionRange(pos, pos)
+      },
+    },
+  }
+
+  window.GTComponents = { ChatList, RightRoleList, RoleAvatar, PlayerAvatar, Modal, MessageBubble, VariablesMenu }
 })()
