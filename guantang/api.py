@@ -790,11 +790,13 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 tool_events = []
                 blocks = []
                 text_buf = ""
+                reasoning_buf = ""
                 try:
                     async for event in ctx.engine.run_messages(system, history, thinking=thinking):
                         kind = event[0]
                         if kind == "reasoning":
                             reasoning += event[1]
+                            reasoning_buf += event[1]
                             await ws.send_json({"type": "reasoning", "delta": event[1]})
                         elif kind == "text":
                             reply += event[1]
@@ -805,6 +807,9 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                                 {"type": "tool_call", "name": event[1].name, "arguments": event[1].arguments}
                             )
                         elif kind == "tool_exec":
+                            if reasoning_buf:
+                                blocks.append({"type": "reasoning", "text": reasoning_buf})
+                                reasoning_buf = ""
                             if text_buf:
                                 blocks.append({"type": "text", "text": text_buf})
                                 text_buf = ""
@@ -824,6 +829,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                         pass
                     continue
                 except WebSocketDisconnect:
+                    if reasoning_buf:
+                        blocks.append({"type": "reasoning", "text": reasoning_buf})
                     if text_buf:
                         blocks.append({"type": "text", "text": text_buf})
                     if reply or reasoning or tool_events:
@@ -839,6 +846,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                         )
                     ctx.maybe_auto_title(session_id)
                     raise
+                if reasoning_buf:
+                    blocks.append({"type": "reasoning", "text": reasoning_buf})
                 if text_buf:
                     blocks.append({"type": "text", "text": text_buf})
                 saved = ctx.storage.add_message(

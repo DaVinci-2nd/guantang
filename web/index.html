@@ -477,7 +477,7 @@
         <span class="msg-time">{{ formatTime(msg.created_at) }}</span>
         <span v-if="msg.interrupted" class="msg-interrupted">已中断</span>
       </div>
-      <div v-if="msg.reasoning" class="reasoning">
+      <div v-if="msg.reasoning && (!msg.blocks || !msg.blocks.length)" class="reasoning">
         <button class="reasoning-toggle" @click="showReasoning = !showReasoning">
           <icon name="eye"></icon><span>思考过程</span><icon name="chevron_down"></icon>
         </button>
@@ -493,7 +493,13 @@
       </div>
       <div v-if="msg.blocks && msg.blocks.length" class="msg-blocks">
         <template v-for="(b, i) in msg.blocks" :key="i">
-          <div v-if="b.type === 'text' && b.text" class="msg-content markdown" v-html="renderMarkdown(b.text)"></div>
+          <div v-if="b.type === 'reasoning' && b.text" class="reasoning">
+            <button class="reasoning-toggle" @click="b.open = !b.open">
+              <icon name="eye"></icon><span>思考过程</span><icon name="chevron_down"></icon>
+            </button>
+            <pre v-if="b.open" class="reasoning-text">{{ b.text }}</pre>
+          </div>
+          <div v-else-if="b.type === 'text' && b.text" class="msg-content markdown" v-html="renderMarkdown(b.text)"></div>
           <div v-else-if="b.type === 'tool'" class="tool-inline">
             <button class="reasoning-toggle" @click="b.open = !b.open">
               <icon name="skill"></icon><span>{{ b.name }}</span>

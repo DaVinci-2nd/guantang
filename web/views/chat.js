@@ -323,6 +323,9 @@
           const data = JSON.parse(ev.data)
           if (data.type === 'reasoning') {
             aiMsg.reasoning += data.delta
+            const last = aiMsg.blocks[aiMsg.blocks.length - 1]
+            if (last && last.type === 'reasoning') last.text += data.delta
+            else aiMsg.blocks.push({ type: 'reasoning', text: data.delta, open: false })
             scrollBottom()
           } else if (data.type === 'text') {
             aiMsg.content += data.delta
