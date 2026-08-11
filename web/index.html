@@ -633,22 +633,53 @@
           </button>
         </div>
       </div>
-      <modal v-if="editTarget" :title="editTarget.sender === 'player' ? '改写消息' : '改写 AI 输出'" @close="closeEdit">
-        <div class="form">
-          <div class="field">
-            <textarea v-model="editText" rows="8" placeholder="编辑原始内容"></textarea>
+      <modal v-if="editTarget" :title="editTarget.sender === 'player' ? '改写消息' : '改写 AI 输出'" @close="closeEdit" wide>
+        <template v-if="editTarget.sender === 'character' && editBlocks && editBlocks.length">
+          <div class="edit-blocks">
+            <div v-for="(b, i) in editBlocks" :key="i" class="edit-block" :class="b.type">
+              <div class="edit-block-head">
+                <span class="edit-block-type">{{ blockTypeName(b.type) }}</span>
+                <div class="edit-block-ops">
+                  <button class="icon-btn small" title="上移" :disabled="i === 0" @click="moveBlock(i, -1)"><icon name="chevron_up"></icon></button>
+                  <button class="icon-btn small" title="下移" :disabled="i === editBlocks.length - 1" @click="moveBlock(i, 1)"><icon name="chevron_down"></icon></button>
+                  <button class="icon-btn small" title="删除此块" @click="editBlocks.splice(i, 1)"><icon name="x"></icon></button>
+                </div>
+              </div>
+              <template v-if="b.type === 'reasoning'">
+                <textarea v-model="b.text" rows="3" placeholder="思考内容"></textarea>
+              </template>
+              <template v-else-if="b.type === 'text'">
+                <textarea v-model="b.text" rows="4" placeholder="正文内容"></textarea>
+              </template>
+              <template v-else-if="b.type === 'tool'">
+                <label class="field"><span>工具名</span><input v-model="b.name" placeholder="工具名称"/></label>
+                <div class="field"><span>参数（JSON）</span><textarea v-model="b.argsText" rows="2" placeholder='{"key": "value"}'></textarea></div>
+                <div class="field"><span>结果</span><textarea v-model="b.result" rows="3" placeholder="工具返回结果"></textarea></div>
+              </template>
+            </div>
           </div>
-        </div>
-        <div class="modal-actions">
-          <template v-if="editTarget.sender === 'player'">
-            <button class="primary-btn" @click="saveEdit(true)"><span>确定并发送</span></button>
-            <button class="ghost-btn" @click="saveEdit(false)">确定</button>
-          </template>
-          <template v-else>
+          <div class="modal-actions">
             <button class="primary-btn" @click="saveEdit(false)"><span>确定</span></button>
-          </template>
-          <button class="ghost-btn" @click="closeEdit">取消</button>
-        </div>
+            <button class="ghost-btn" @click="closeEdit">取消</button>
+          </div>
+        </template>
+        <template v-else>
+          <div class="form">
+            <div class="field">
+              <textarea v-model="editText" rows="8" placeholder="编辑原始内容"></textarea>
+            </div>
+          </div>
+          <div class="modal-actions">
+            <template v-if="editTarget.sender === 'player'">
+              <button class="primary-btn" @click="saveEdit(true)"><span>确定并发送</span></button>
+              <button class="ghost-btn" @click="saveEdit(false)">确定</button>
+            </template>
+            <template v-else>
+              <button class="primary-btn" @click="saveEdit(false)"><span>确定</span></button>
+            </template>
+            <button class="ghost-btn" @click="closeEdit">取消</button>
+          </div>
+        </template>
       </modal>
       <modal v-if="previewTarget" :title="previewTarget.kind === 'image' ? previewTarget.name : '附件预览'" @close="previewTarget = null">
         <div v-if="previewTarget.kind === 'image'" class="image-preview">

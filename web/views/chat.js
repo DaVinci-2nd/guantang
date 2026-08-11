@@ -12,6 +12,7 @@
       const fileInput = ref(null)
       const editTarget = ref(null)
       const editText = ref('')
+      const editBlocks = ref(null)
       const debugData = ref(null)
       const previewTarget = ref(null)
       const editorDirty = ref(false)
@@ -463,10 +464,35 @@
       function openEdit(msg) {
         editTarget.value = msg
         editText.value = msg.content || ''
+        if (msg.sender === 'character' && msg.blocks && msg.blocks.length) {
+          editBlocks.value = msg.blocks.map((b) => {
+            const c = { ...b }
+            if (b.type === 'tool') c.argsText = JSON.stringify(b.arguments || {}, null, 2)
+            return c
+          })
+        } else {
+          editBlocks.value = null
+        }
       }
 
       function closeEdit() {
         editTarget.value = null
+        editBlocks.value = null
+      }
+
+      function blockTypeName(type) {
+        if (type === 'reasoning') return '思考'
+        if (type === 'tool') return '工具调用'
+        return '正文'
+      }
+
+      function moveBlock(index, offset) {
+        const target = index + offset
+        if (target < 0 || target >= editBlocks.value.length) return
+        const arr = editBlocks.value
+        const tmp = arr[index]
+        arr[index] = arr[target]
+        arr[target] = tmp
       }
 
       async function saveEdit(sendAfter) {
@@ -475,27 +501,55 @@
         if (!msg || !sid) return
         const isPlayer = msg.sender === 'player'
         const body = { content: editText.value }
-        if (!isPlayer) body.blocks = []
+        if (isPlayer) {
+          try {
+            const updated = await api.put(`/api/sessions/${sid}/messages/${msg.id}`, body)
+            msg.content = updated.content
+          } catch (e) {
+            store.notify(e.message)
+            return
+          }
+          editTarget.value = null
+          if (sendAfter) {
+            const player = msg
+            if (player.id) {
+              await api.del(`/api/sessions/${sid}/messages?after=${player.id}`)
+            }
+            const idx = store.messages.findIndex((m) => m.key === player.key)
+            store.messages = store.messages.slice(0, idx + 1)
+            await sendContent(player.content, player.attachments || [], sid, false)
+          }
+          return
+        }
+        if (editBlocks.value && editBlocks.value.length) {
+          const blocks = editBlocks.value.map((b) => {
+            const c = { ...b }
+            delete c.open
+            if (c.type === 'tool') {
+              try {
+                c.arguments = JSON.parse(c.argsText || '{}')
+              } catch (e) {
+                c.arguments = c.arguments || {}
+              }
+              delete c.argsText
+            }
+            return c
+          })
+          body.blocks = blocks
+          body.content = blocks.filter((b) => b.type === 'text').map((b) => b.text || '').join('')
+        } else {
+          body.blocks = []
+        }
         try {
           const updated = await api.put(`/api/sessions/${sid}/messages/${msg.id}`, body)
           msg.content = updated.content
-          if (!isPlayer) {
-            msg.blocks = []
-          }
+          msg.blocks = updated.blocks || []
         } catch (e) {
           store.notify(e.message)
           return
         }
         editTarget.value = null
-        if (isPlayer && sendAfter) {
-          const player = msg
-          if (player.id) {
-            await api.del(`/api/sessions/${sid}/messages?after=${player.id}`)
-          }
-          const idx = store.messages.findIndex((m) => m.key === player.key)
-          store.messages = store.messages.slice(0, idx + 1)
-          await sendContent(player.content, player.attachments || [], sid, false)
-        }
+        editBlocks.value = null
       }
 
       async function showDebug() {
@@ -538,7 +592,8 @@
         store, chatList, editorEl, fileInput, filteredSessions, modeOptions, filterOptions,
         currentRole, currentSession, newSession, deleteCurrentSession, formatTime,
         renderMarkdown, onModeChange, send, onFiles, toggleCentered, canSend,
-        abortStream, regenerate, editTarget, editText, openEdit, closeEdit, saveEdit,
+        abortStream, regenerate, editTarget, editText, editBlocks, openEdit, closeEdit, saveEdit,
+        blockTypeName, moveBlock,
         debugData, showDebug, debugJson, previewTarget, openPreview,
         onEditorKeydown, onEditorPaste, onEditorInput: markDirty,
       }
