@@ -17,6 +17,7 @@
       const previewTarget = ref(null)
       const editorDirty = ref(false)
       const editingAtts = ref([])
+      const superData = ref(null)
 
       let activeWs = null
       let activeAiMsg = null
@@ -246,7 +247,13 @@
       }
 
       function onEditorKeydown(e) {
-        if (e.key === 'Enter' && !e.shiftKey) {
+        if (e.key === 'Enter') {
+          if (e.ctrlKey && e.shiftKey) {
+            e.preventDefault()
+            superSend()
+            return
+          }
+          if (e.shiftKey) return
           e.preventDefault()
           send()
         }
@@ -284,12 +291,55 @@
         await sendContent(text, meta, store.currentSessionId)
       }
 
-      async function sendContent(content, attList, sessionId, persistPlayer = true) {
+      async function superSend() {
+        if (store.streaming) return
+        const sid = store.currentSessionId
+        if (!sid) return
+        const { text, atts } = extractEditorContent()
+        if (!text.trim() && !atts.length) return
+        try {
+          const ctxData = await api.get(`/api/sessions/${sid}/submit-context?message=${encodeURIComponent(text)}`)
+          const rows = [{ role: 'system', content: ctxData.system || '' }]
+          ;(ctxData.messages || []).forEach((m) => {
+            rows.push({ role: m.role, content: m.content || '' })
+          })
+          superData.value = rows
+        } catch (e) {
+          store.notify(e.message)
+        }
+      }
+
+      function addSuperRow() {
+        if (superData.value) superData.value.push({ role: 'user', content: '' })
+      }
+
+      function removeSuperRow(index) {
+        if (superData.value) superData.value.splice(index, 1)
+      }
+
+      function superRoleName(role) {
+        if (role === 'system') return '系统提示词'
+        if (role === 'user') return '玩家消息'
+        return '角色消息'
+      }
+
+      async function submitSuper() {
+        if (!superData.value || store.streaming) return
+        const rows = superData.value.filter((r) => r.role && r.content !== undefined)
+        const sid = store.currentSessionId
+        if (!sid) return
+        clearEditor()
+        superData.value = null
+        await sendContent('', [], sid, true, rows)
+      }
+
+      async function sendContent(content, attList, sessionId, persistPlayer = true, superMessages = null) {
         if (store.streaming) return
         const sid = sessionId || store.currentSessionId
         if (!sid) return
+        const isSuper = !!superMessages
         store.streaming = true
-        if (persistPlayer) {
+        if (persistPlayer && !isSuper) {
           let saved
           try {
             saved = await api.post(`/api/sessions/${sid}/messages`, { content, attachments: attList || [] })
@@ -299,6 +349,16 @@
             return
           }
           saved.key = 'p' + keySeq++
+          store.messages.push(saved)
+        } else if (isSuper) {
+          const playerRow = [...superMessages].reverse().find((m) => m.role === 'user')
+          const saved = {
+            key: 'p' + keySeq++,
+            sender: 'player',
+            content: playerRow ? playerRow.content : content,
+            attachments: [],
+            created_at: Date.now() / 1000,
+          }
           store.messages.push(saved)
         }
 
@@ -399,8 +459,17 @@
           }
         }
         ws.onopen = () => {
-          ws.send(JSON.stringify({ session_id: sid, message: content }))
+          if (isSuper) {
+            ws.send(JSON.stringify({ session_id: sid, super_messages: superMessages }))
+          } else {
+            ws.send(JSON.stringify({ session_id: sid, message: content }))
+          }
         }
+      }
+
+      async function onSendClick(e) {
+        if (e.shiftKey && e.ctrlKey) superSend()
+        else send()
       }
 
       function abortStream() {
@@ -596,6 +665,7 @@
         blockTypeName, moveBlock,
         debugData, showDebug, debugJson, previewTarget, openPreview,
         onEditorKeydown, onEditorPaste, onEditorInput: markDirty,
+        superData, superSend, addSuperRow, removeSuperRow, superRoleName, submitSuper, onSendClick,
       }
     },
   }

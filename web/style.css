@@ -489,6 +489,42 @@ body {
 
 .edit-block textarea:focus { outline: none; border-color: var(--text-sub); }
 
+.super-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.super-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.super-row-head { display: flex; align-items: center; gap: 10px; }
+
+.super-row-index { font-size: 11px; color: var(--text-sub); flex: 1; }
+
+.super-row textarea {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  resize: vertical;
+  line-height: 1.6;
+}
+
+.super-row textarea:focus { outline: none; border-color: var(--text-sub); }
+
 .msg-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
 
 .key-row { display: flex; align-items: center; gap: 8px; }

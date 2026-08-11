@@ -628,7 +628,7 @@
           <button v-if="store.streaming" class="primary-btn send-btn abort" title="中断" @click="abortStream">
             <icon name="square"></icon>
           </button>
-          <button v-else class="primary-btn send-btn" :disabled="!canSend" @click="send">
+          <button v-else class="primary-btn send-btn" :disabled="!canSend" @click="onSendClick">
             <icon name="send"></icon>
           </button>
         </div>
@@ -680,6 +680,30 @@
             <button class="ghost-btn" @click="closeEdit">取消</button>
           </div>
         </template>
+      </modal>
+      <modal v-if="superData" title="超级发送：编辑本次提交内容" @close="superData = null" wide>
+        <div class="super-list">
+          <div v-for="(r, i) in superData" :key="i" class="super-row">
+            <div class="super-row-head">
+              <select v-model="r.role" class="mode-select">
+                <option value="system">系统提示词</option>
+                <option value="user">玩家消息</option>
+                <option value="assistant">角色消息</option>
+              </select>
+              <span class="super-row-index">#{{ i + 1 }}</span>
+              <button class="icon-btn small" title="删除此行" @click="removeSuperRow(i)">
+                <icon name="x"></icon>
+              </button>
+            </div>
+            <textarea v-model="r.content" rows="2" :placeholder="superRoleName(r.role)"></textarea>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button class="ghost-btn" @click="addSuperRow"><icon name="plus"></icon><span>添加消息</span></button>
+          <span style="flex:1"></span>
+          <button class="primary-btn" @click="submitSuper"><span>提交</span></button>
+          <button class="ghost-btn" @click="superData = null">取消</button>
+        </div>
       </modal>
       <modal v-if="previewTarget" :title="previewTarget.kind === 'image' ? previewTarget.name : '附件预览'" @close="previewTarget = null">
         <div v-if="previewTarget.kind === 'image'" class="image-preview">

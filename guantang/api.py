@@ -623,6 +623,17 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             raise HTTPException(404, "消息不存在")
         return msg
 
+    @app.get("/api/sessions/{session_id}/submit-context")
+    async def submit_context(session_id: int, message: str = ""):
+        if not ctx.storage.get_session(session_id):
+            raise HTTPException(404, "会话不存在")
+        session, role, model_def = ctx.session_context(session_id)
+        system = ctx.build_system(session, role, model_def)
+        messages = ctx.history_to_openai(ctx.storage.list_messages(session_id))
+        if message:
+            messages.append({"role": "user", "content": message})
+        return {"system": system, "messages": messages}
+
     @app.get("/api/sessions/{session_id}/debug")
     async def session_debug(session_id: int):
         session = ctx.storage.get_session(session_id)
@@ -756,7 +767,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 data = await ws.receive_json()
                 session_id = data.get("session_id")
                 message = (data.get("message") or "").strip()
-                if not session_id or not message:
+                super_messages = data.get("super_messages")
+                if not session_id or (not message and not super_messages):
                     await ws.send_json({"type": "error", "text": "参数不完整"})
                     continue
                 try:
@@ -773,18 +785,38 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                     role.get("thinking_mode", ""),
                     role.get("thinking_custom", ""),
                 )
+                super_messages = data.get("super_messages")
+                use_super = bool(super_messages)
                 history_messages = ctx.storage.list_messages(session_id)
-                if history_messages and history_messages[-1]["sender"] == "player":
-                    recognized_id = await ctx.recognize_message_images(history_messages[-1])
-                    if recognized_id:
-                        updated = ctx.storage.get_message(session_id, recognized_id)
-                        history_messages = ctx.storage.list_messages(session_id)
-                        try:
-                            await ws.send_json({"type": "recognized", "message": updated})
-                        except WebSocketDisconnect:
-                            raise
-                history = ctx.history_to_openai(history_messages)
-                ctx.maybe_auto_title(session_id, ws)
+                if use_super:
+                    system_parts = [m.get("content", "") for m in super_messages if m.get("role") == "system"]
+                    super_system = "\n\n".join(p for p in system_parts if p)
+                    if super_system:
+                        system = super_system
+                    player_rows = [m for m in super_messages if m.get("role") == "user"]
+                    if player_rows:
+                        last_player = player_rows[-1].get("content", "")
+                        if history_messages and history_messages[-1]["sender"] == "player":
+                            ctx.storage.update_message(session_id, history_messages[-1]["id"], content=last_player)
+                        else:
+                            ctx.storage.add_message(session_id, "player", last_player)
+                    history = [
+                        {"role": "user" if m.get("role") == "user" else "assistant", "content": m.get("content", "")}
+                        for m in super_messages
+                        if m.get("role") != "system"
+                    ]
+                else:
+                    if history_messages and history_messages[-1]["sender"] == "player":
+                        recognized_id = await ctx.recognize_message_images(history_messages[-1])
+                        if recognized_id:
+                            updated = ctx.storage.get_message(session_id, recognized_id)
+                            history_messages = ctx.storage.list_messages(session_id)
+                            try:
+                                await ws.send_json({"type": "recognized", "message": updated})
+                            except WebSocketDisconnect:
+                                raise
+                    history = ctx.history_to_openai(history_messages)
+                    ctx.maybe_auto_title(session_id, ws)
                 reasoning = ""
                 reply = ""
                 tool_events = []
