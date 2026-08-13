@@ -1,13 +1,47 @@
 (function () {
   const { reactive, ref, computed, watch, nextTick } = Vue
 
+  function escapeHtml(value) {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+  }
+
   window.renderMarkdown = function (text) {
     try {
-      return marked.parse(text || '', { gfm: true, breaks: true })
+      const renderer = new marked.Renderer()
+      const origCode = renderer.code.bind(renderer)
+      renderer.code = function (code, infostring) {
+        const lang = (infostring || 'txt').split(/\s+/)[0] || 'txt'
+        return (
+          '<div class="code-block">' +
+          '<div class="code-block-head">' +
+          '<span class="code-block-lang">' + escapeHtml(lang) + '</span>' +
+          '<button type="button" class="code-block-copy" title="复制代码">复制</button>' +
+          '</div>' +
+          '<pre><code class="language-' + escapeHtml(lang) + '">' + escapeHtml(code) + '</code></pre>' +
+          '</div>'
+        )
+      }
+      return marked.parse(text || '', { gfm: true, breaks: true, renderer })
     } catch (e) {
       return text || ''
     }
   }
+
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.code-block-copy')
+    if (!btn) return
+    const block = btn.closest('.code-block')
+    const codeEl = block ? block.querySelector('pre code') : null
+    if (!codeEl) return
+    navigator.clipboard.writeText(codeEl.textContent).then(
+      () => store.notify('代码已复制', 'ok'),
+      () => store.notify('复制失败')
+    )
+  })
 
   const ChatList = {
     template: document.getElementById('tpl-chat').innerHTML,

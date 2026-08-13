@@ -830,6 +830,46 @@ body {
   max-width: 100%;
 }
 
+.code-block {
+  margin: 8px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.code-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 10px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.code-block-lang {
+  font-size: 11px;
+  color: var(--text-sub);
+  font-family: Consolas, monospace;
+}
+
+.code-block-copy {
+  border: none;
+  background: none;
+  color: var(--text-sub);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.code-block-copy:hover { background: var(--bg-hover); color: var(--text); }
+
+.code-block pre {
+  margin: 0;
+  border: none;
+  border-radius: 0;
+}
+
 .markdown code { font-family: Consolas, monospace; }
 
 .markdown :not(pre) > code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; font-size: 12px; }

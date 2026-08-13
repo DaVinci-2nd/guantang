@@ -213,6 +213,11 @@
         }
       }
 
+      function attachExt(name) {
+        const m = /\.([a-zA-Z0-9]+)$/.exec(name || '')
+        return m ? m[1].toLowerCase() : 'txt'
+      }
+
       function extractEditorContent() {
         const el = editorEl.value
         let text = ''
@@ -226,7 +231,8 @@
                 const item = editingAtts.value.find((a) => a.id === Number(child.dataset.aid))
                 if (item) {
                   if (item.kind === 'text') {
-                    text += `【附件：${item.name}】\n${item.content}`
+                    const ext = attachExt(item.name)
+                    text += `【附件：${item.name}】\n\`\`\`${ext}\n${item.content}\n\`\`\``
                   } else if (item.kind === 'image') {
                     text += `【图片：${item.name}】`
                   } else {
