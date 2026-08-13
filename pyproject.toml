@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "guantang"
 version = "0.1.0"
-description = "灌汤：带强烈人格的 AI 干活框架"
+description = "灌汤：本地部署的中文 AI 角色扮演聊天与智能体框架。支持 OpenAI 兼容多模型接入、MCP 技能扩展、联网搜索、文件读写与命令执行（带审批），内置 Web UI 与 CLI。"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
