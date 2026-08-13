@@ -54,6 +54,15 @@ read_file:
       type: integer
       description: 可选，最多读取的字符数，默认 8000
 
+read_file_full:
+  approval: false
+  required: [path]
+  description: 读取文件完整内容，不截断。只允许读取已添加工作目录内的文件。
+  parameters:
+    path:
+      type: string
+      description: 文件绝对路径，或相对于工作目录的路径
+
 create_file:
   approval: true
   required: [path, content]

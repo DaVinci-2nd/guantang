@@ -24,6 +24,8 @@
     autoTitle: { enabled: false, model: '', prompt: '', mode: 1, rounds: 3 },
     streaming: false,
     ws: null,
+    activeWs: null,
+    activeAiMsg: null,
     streamingMsgs: {},
     toast: { text: '', kind: '' },
   })

@@ -19,9 +19,6 @@
       const editingAtts = ref([])
       const superData = ref(null)
 
-      let activeWs = null
-      let activeAiMsg = null
-
       const filteredSessions = computed(() => {
         if (store.filterCharacter === '全部') return store.sessions
         return store.sessions.filter((s) => s.character_name === store.filterCharacter)
@@ -385,11 +382,11 @@
         })
         store.messages.push(aiMsg)
         store.streamingMsgs[sid] = aiMsg
-        activeAiMsg = aiMsg
+        store.activeAiMsg = aiMsg
         scrollBottom(true)
 
         const ws = new WebSocket(`ws://${location.host}/ws/chat`)
-        activeWs = ws
+        store.activeWs = ws
         ws.onmessage = (ev) => {
           const data = JSON.parse(ev.data)
           if (data.type === 'reasoning') {
@@ -515,9 +512,9 @@
       }
 
       function abortStream() {
-        if (!store.streaming || !activeWs) return
-        const aiMsg = activeAiMsg
-        activeWs.close()
+        if (!store.streaming || !store.activeWs) return
+        const aiMsg = store.activeAiMsg
+        store.activeWs.close()
         if (aiMsg) {
           aiMsg.streaming = false
           aiMsg.interrupted = true
@@ -526,7 +523,7 @@
       }
 
       function onApprove(block, decision) {
-        const ws = activeWs
+        const ws = store.activeWs
         if (!ws || ws.readyState !== WebSocket.OPEN) return
         if (block.approval_id) {
           ws.send(JSON.stringify({ type: 'approval_response', approval_id: block.approval_id, decision }))

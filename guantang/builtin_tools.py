@@ -365,6 +365,28 @@ async def execute_read_file(args, workdirs):
     return f"=== {p} ===\n{text}{note}"
 
 
+async def execute_read_file_full(args, workdirs):
+    path_arg = str(args.get("path") or "").strip()
+    if not path_arg:
+        return "读取失败：路径不能为空"
+    p, err = resolve_path(path_arg, workdirs)
+    if err:
+        return err
+    if not p.is_file():
+        return f"读取失败：不是文件：{p}"
+    try:
+        size = p.stat().st_size
+        if size > MAX_READ_BYTES:
+            return f"读取失败：文件过大（{_fmt_bytes(size)}），仅支持 {_fmt_bytes(MAX_READ_BYTES)} 以内的文本文件"
+        raw = p.read_bytes()
+    except OSError as e:
+        return f"读取失败：{e}"
+    if b"\x00" in raw[:4096]:
+        return f"读取失败：{p} 是二进制文件，不支持读取"
+    text = raw.decode("utf-8", errors="replace")
+    return f"=== {p} ===\n{text}"
+
+
 async def execute_create_file(args, workdirs):
     path_arg = str(args.get("path") or "").strip()
     content = str(args.get("content") or "")
@@ -517,6 +539,7 @@ EXECUTORS = {
     "workdir_remove": execute_workdir_remove,
     "list_dir": execute_list_dir,
     "read_file": execute_read_file,
+    "read_file_full": execute_read_file_full,
     "create_file": execute_create_file,
     "edit_text": execute_edit_text,
     "delete_path": execute_delete_path,
