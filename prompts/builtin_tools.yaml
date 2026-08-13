@@ -1,5 +1,4 @@
-approval_reject_text: 该操作已被手动拒绝。
-被拒绝的操作：{operation}
+approval_reject_text: "该操作已被手动拒绝。\n被拒绝的操作：{operation}"
 
 workdir_add:
   approval: true
