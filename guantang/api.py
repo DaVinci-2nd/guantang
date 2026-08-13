@@ -133,10 +133,7 @@ class AppContext:
         return ""
 
     def builtin_tools_defs(self) -> list[dict]:
-        try:
-            return parse_tools(self.builtin_tools_text())
-        except Exception:
-            return []
+        return parse_tools(self.builtin_tools_text())
 
     async def ensure(self, model_def: dict, skill_defs: list[dict], search_defs: list[dict] | None = None):
         search_defs = search_defs or []
@@ -291,8 +288,9 @@ class AppContext:
                 desc = text.strip()
                 if desc:
                     descriptions.append(f"【图片：{att.get('name', '图片')}】{desc}")
-            except Exception:
-                descriptions.append(f"【图片：{att.get('name', '图片')}】（图片识别失败，无法获取描述）")
+            except Exception as e:
+                send_log.record_error(msg.get("session_id"), f"图片识别失败：{type(e).__name__}: {e}")
+                descriptions.append(f"【图片：{att.get('name', '图片')}】图片识别失败，无法获取描述")
             finally:
                 await provider.close()
         return mark_and_save("\n\n".join(descriptions))
@@ -364,10 +362,10 @@ class AppContext:
             if ws is not None:
                 try:
                     await ws.send_json({"type": "title", "title": title, "session_id": session_id})
-                except Exception:
+                except WebSocketDisconnect:
                     pass
-        except Exception:
-            pass
+        except Exception as e:
+            send_log.record_error(session_id, f"自动标题生成失败：{type(e).__name__}: {e}")
 
     def should_auto_title(self, session_id: int, player_count: int, ai_count: int) -> bool:
         at = self.cfg.auto_title()
@@ -426,13 +424,17 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     @app.get("/api/state")
     async def state():
+        try:
+            builtin_tools = ctx.builtin_tools_defs()
+        except Exception as e:
+            builtin_tools = {"error": f"内置工具配置解析失败：{e}"}
         return {
             "roles": [ctx.role_to_response(r) for r in ctx.roles.list()],
             "skills": ctx.skills.list(),
             "modes": ctx.modes.list(),
             "models": ctx.models.list(),
             "thinking_presets": THINKING_PRESETS,
-            "builtin_tools": ctx.builtin_tools_defs(),
+            "builtin_tools": builtin_tools,
             "sessions": ctx.storage.list_sessions(),
             "session_characters": ctx.storage.session_characters(),
             "player": cfg.player(),
@@ -683,6 +685,11 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 out["api_key"] = "******"
             return out
 
+        try:
+            builtin_tools = ctx.builtin_tools_defs()
+        except Exception as e:
+            builtin_tools = {"error": f"内置工具配置解析失败：{e}"}
+
         return {
             "session": session,
             "role": role,
@@ -696,7 +703,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             },
             "skills": [mask_key(s) for s in skills],
             "workdirs": session.get("workdirs") or [],
-            "builtin_tools": ctx.builtin_tools_defs(),
+            "builtin_tools": builtin_tools,
             "multimodal": cfg.multimodal(),
             "auto_title": cfg.auto_title(),
             "messages": ctx.storage.list_messages(session_id),
@@ -996,6 +1003,17 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                     ctx.storage.update_session(session_id, workdirs=workdirs)
                     ctx.maybe_auto_title(session_id)
                     raise
+                except Exception as e:
+                    import traceback
+
+                    traceback.print_exc()
+                    send_log.record_error(session_id, f"处理出错：{type(e).__name__}: {e}")
+                    ctx.storage.update_session(session_id, workdirs=workdirs)
+                    try:
+                        await ws.send_json({"type": "error", "text": f"处理出错：{type(e).__name__}: {e}"})
+                    except WebSocketDisconnect:
+                        pass
+                    continue
                 if reasoning_buf:
                     blocks.append({"type": "reasoning", "text": reasoning_buf})
                 if text_buf:

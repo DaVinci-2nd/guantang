@@ -113,6 +113,26 @@ class SendLog:
                 continue
         return result
 
+    def record_error(self, session_id, message: str):
+        if not self.db_path:
+            return
+        entry = {
+            "ts": time.time(),
+            "context": {"session_id": session_id, "purpose": "error"},
+            "endpoint": "",
+            "request": {},
+            "events": [],
+            "ok": False,
+            "error": message,
+        }
+        conn = sqlite3.connect(self.db_path)
+        conn.execute(
+            "INSERT INTO send_log (session_id, ts, entry) VALUES (?, ?, ?)",
+            (session_id, entry["ts"], json.dumps(entry, ensure_ascii=False)),
+        )
+        conn.commit()
+        conn.close()
+
     def clear(self):
         if self.db_path:
             conn = sqlite3.connect(self.db_path)

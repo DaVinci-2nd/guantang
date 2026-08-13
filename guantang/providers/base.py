@@ -88,9 +88,15 @@ class BaseProvider:
                                 break
                             try:
                                 chunk = json.loads(data)
-                            except json.JSONDecodeError:
+                            except json.JSONDecodeError as e:
+                                send_log.append_event(entry, ["warning", f"SSE 数据解析失败：{e}"])
                                 continue
                             for event in self._parse_chunk(chunk, accum):
+                                send_log.append_event(entry, self._summarize(event))
+                                yield event
+                        if accum:
+                            send_log.append_event(entry, ["warning", "流结束时存在未完成的工具调用，已强制取出"])
+                            for event in self._flush_tool_calls(accum):
                                 send_log.append_event(entry, self._summarize(event))
                                 yield event
                     send_log.finish(entry, ok=True)
@@ -117,6 +123,20 @@ class BaseProvider:
             return ["done", event[1]]
         return [kind]
 
+    def _flush_tool_calls(self, accum: dict) -> list:
+        events = []
+        for idx in sorted(accum):
+            slot = accum[idx]
+            try:
+                args = json.loads(slot["arguments"]) if slot["arguments"] else {}
+            except json.JSONDecodeError:
+                args = {"_raw": slot["arguments"]}
+            events.append(
+                ("tool_call", ToolCall(id=slot["id"] or f"call_{idx}", name=slot["name"], arguments=args))
+            )
+        accum.clear()
+        return events
+
     def _parse_chunk(self, chunk: dict, accum: dict):
         events = []
         for choice in chunk.get("choices") or []:
@@ -139,16 +159,7 @@ class BaseProvider:
                     slot["arguments"] += fn["arguments"]
             finish = choice.get("finish_reason")
             if finish == "tool_calls":
-                for idx in sorted(accum):
-                    slot = accum[idx]
-                    try:
-                        args = json.loads(slot["arguments"]) if slot["arguments"] else {}
-                    except json.JSONDecodeError:
-                        args = {"_raw": slot["arguments"]}
-                    events.append(
-                        ("tool_call", ToolCall(id=slot["id"] or f"call_{idx}", name=slot["name"], arguments=args))
-                    )
-                accum.clear()
+                events.extend(self._flush_tool_calls(accum))
             elif finish:
                 events.append(("done", finish))
         return events

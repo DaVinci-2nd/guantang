@@ -139,10 +139,8 @@ class Engine:
     def _load_builtin_defs(self) -> list[dict]:
         if not self.builtin_loader:
             return []
-        try:
-            return self.builtin_loader() or []
-        except Exception:
-            return []
+        defs = self.builtin_loader()
+        return defs or []
 
     async def _build_openai_tools(self, builtin_defs: list[dict] | None = None) -> list[dict]:
         builtin_defs = builtin_defs if builtin_defs is not None else self._load_builtin_defs()
