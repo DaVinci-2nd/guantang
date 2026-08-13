@@ -389,6 +389,10 @@ body {
 
 .diff-line.add { background: rgba(39, 174, 96, 0.16); color: #27ae60; }
 
+.diff-part.part-del { background: rgba(231, 76, 60, 0.45); }
+
+.diff-part.part-add { background: rgba(39, 174, 96, 0.45); }
+
 .approval-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 
 .approval-btn {

@@ -100,6 +100,72 @@ async def describe_operation(name: str, args: dict, tool_def=None) -> str:
     return f"调用工具：{name}，参数：{args}"
 
 
+def _char_parts(old: str, new: str):
+    sm = difflib.SequenceMatcher(None, old, new)
+    old_parts = []
+    new_parts = []
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == "equal":
+            old_parts.append([old[i1:i2], False])
+            new_parts.append([new[j1:j2], False])
+        elif tag == "delete":
+            old_parts.append([old[i1:i2], True])
+        elif tag == "insert":
+            new_parts.append([new[j1:j2], True])
+        elif tag == "replace":
+            old_parts.append([old[i1:i2], True])
+            new_parts.append([new[j1:j2], True])
+    return old_parts, new_parts
+
+
+def _pair_diff_lines(before_lines: list, after_lines: list) -> list:
+    nd = list(difflib.ndiff(before_lines, after_lines))
+    lines = []
+    i = 0
+    n = len(nd)
+    while i < n:
+        line = nd[i]
+        if line.startswith("? "):
+            i += 1
+            continue
+        prefix = line[0]
+        content = line[2:] if len(line) > 2 else ""
+        if prefix == "-":
+            del_group = [content]
+            i += 1
+            while i < n and nd[i].startswith("- "):
+                del_group.append(nd[i][2:])
+                i += 1
+            while i < n and nd[i].startswith("? "):
+                i += 1
+            add_group = []
+            while i < n and nd[i].startswith("+ "):
+                add_group.append(nd[i][2:])
+                i += 1
+            if del_group and len(del_group) == len(add_group):
+                for d, a in zip(del_group, add_group):
+                    old_parts, new_parts = _char_parts(d, a)
+                    lines.append(["-", None, old_parts])
+                    lines.append(["+", None, new_parts])
+            else:
+                for d in del_group:
+                    lines.append(["-", d, None])
+                for a in add_group:
+                    lines.append(["+", a, None])
+        elif prefix == "+":
+            add_group = [content]
+            i += 1
+            while i < n and nd[i].startswith("+ "):
+                add_group.append(nd[i][2:])
+                i += 1
+            for a in add_group:
+                lines.append(["+", a, None])
+        else:
+            lines.append([prefix, content, None])
+            i += 1
+    return lines
+
+
 def build_edit_diff(args: dict, workdirs: list) -> dict | None:
     path_arg = str(args.get("path") or "").strip()
     old_text = str(args.get("old_text") or "")
@@ -119,14 +185,30 @@ def build_edit_diff(args: dict, workdirs: list) -> dict | None:
         after = before.replace(old_text, new_text)
     else:
         after = before + new_text
-    lines = []
-    for line in difflib.ndiff(before.splitlines(), after.splitlines()):
-        if line.startswith("? "):
-            continue
-        prefix = line[0] if line else " "
-        content = line[2:] if len(line) > 2 else ""
-        lines.append([prefix, content])
-    return {"path": str(p), "lines": lines}
+    return {"path": str(p), "mode": "edit", "lines": _pair_diff_lines(before.splitlines(), after.splitlines())}
+
+
+def build_create_diff(args: dict, workdirs: list) -> dict | None:
+    path_arg = str(args.get("path") or "").strip()
+    content = str(args.get("content") or "")
+    if not path_arg:
+        return None
+    p, err = resolve_path(path_arg, workdirs, must_exist=False)
+    if err:
+        return None
+    after_lines = content.splitlines()
+    lines = [["+", line, None] for line in after_lines]
+    if not lines:
+        lines = [["+", "", None]]
+    return {"path": str(p), "mode": "create", "lines": lines}
+
+
+def build_approval_diff(name: str, args: dict, workdirs: list) -> dict | None:
+    if name == "edit_text":
+        return build_edit_diff(args, workdirs)
+    if name == "create_file":
+        return build_create_diff(args, workdirs)
+    return None
 
 
 def _fmt_bytes(n: int) -> str:

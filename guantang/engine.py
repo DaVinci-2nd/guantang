@@ -1,6 +1,6 @@
 import json
 
-from .builtin_tools import build_edit_diff, describe_operation, execute_builtin, to_openai_tools
+from .builtin_tools import build_approval_diff, describe_operation, execute_builtin, to_openai_tools
 from .mcp_client import MCPManager
 from .providers.base import ToolCall
 from .search import search
@@ -129,7 +129,7 @@ class Engine:
         tool_def = next((t for t in builtin_defs if t["name"] == name), None)
         operation = await describe_operation(name, arguments, tool_def)
         if tool_def and tool_def.get("approval") and self.approval_handler:
-            diff = build_edit_diff(arguments, self.workdirs) if name == "edit_text" else None
+            diff = build_approval_diff(name, arguments, self.workdirs)
             decision = await self.approval_handler(name, arguments, operation, diff)
             if decision == "reject":
                 return f"该操作已被拒绝。\n被拒绝的操作：{operation}"
