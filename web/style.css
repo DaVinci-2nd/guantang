@@ -882,6 +882,16 @@ body {
   background: var(--code-bg-player);
 }
 
+.msg.align-right .code-block { border-color: var(--code-bg-player); }
+
+.msg.align-right .code-block-head { background: var(--code-bg-player); }
+
+.msg.align-right .code-block-lang { color: var(--accent-text); }
+
+.msg.align-right .code-block-copy { color: var(--accent-text); }
+
+.msg.align-right .code-block-copy:hover { background: rgba(128, 128, 128, 0.25); }
+
 .markdown ul, .markdown ol { padding-left: 20px; margin: 6px 0; }
 
 .markdown blockquote { border-left: 3px solid var(--text-sub); padding-left: 10px; color: var(--text-sub); margin: 6px 0; }
