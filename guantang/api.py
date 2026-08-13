@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .builtin_tools import parse_tools, tools_to_yaml
+from .builtin_tools import parse_tools, read_approval_reject_text, tools_to_yaml
 from .config import Config
 from .engine import ApprovalStopped, Engine
 from .mcp_client import MCPManager
@@ -28,7 +28,7 @@ from .storage import Storage
 from .thinking_presets import THINKING_PRESETS, build_thinking
 from .zh_translator import ZhTranslator
 
-REJECT_STOP_TEXT = "此操作已被拒绝，对话已中断。"
+REJECT_STOP_TEXT = "此操作已被手动拒绝，对话已中断。"
 
 
 class RolePayload(BaseModel):
@@ -134,6 +134,9 @@ class AppContext:
 
     def builtin_tools_defs(self) -> list[dict]:
         return parse_tools(self.builtin_tools_text())
+
+    def approval_reject_text(self) -> str:
+        return read_approval_reject_text(self.builtin_tools_text())
 
     async def ensure(self, model_def: dict, skill_defs: list[dict], search_defs: list[dict] | None = None):
         search_defs = search_defs or []
@@ -736,6 +739,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     class BuiltinToolsFormPayload(BaseModel):
         tools: list[dict]
+        approval_reject_text: str | None = None
 
     @app.get("/api/builtin-tools")
     async def get_builtin_tools():
@@ -744,7 +748,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             tools = parse_tools(text)
         except Exception:
             tools = []
-        return {"text": text, "tools": tools}
+        return {"text": text, "tools": tools, "approval_reject_text": ctx.approval_reject_text()}
 
     @app.put("/api/builtin-tools")
     async def save_builtin_tools(payload: BuiltinToolsPayload):
@@ -762,7 +766,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     @app.put("/api/builtin-tools/form")
     async def save_builtin_tools_form(payload: BuiltinToolsFormPayload):
         try:
-            text = tools_to_yaml(payload.tools)
+            text = tools_to_yaml(payload.tools, payload.approval_reject_text)
             defs = parse_tools(text)
         except Exception as e:
             raise HTTPException(400, f"工具配置格式错误：{e}")
@@ -867,6 +871,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
                 workdirs = session.get("workdirs") or []
                 ctx.engine.approval_handler = approval_handler
+                ctx.engine.approval_reject_text = ctx.approval_reject_text()
                 ctx.engine.workdirs = workdirs
                 set_context(session_id=session_id, role=role["name"], model=model_def.get("model", ""), purpose="chat")
                 system = ctx.build_system(session, role, model_def)

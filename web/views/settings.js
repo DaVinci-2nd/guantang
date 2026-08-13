@@ -8,10 +8,12 @@
       const playerAvatar = ref(store.player.avatar.startsWith('p-') ? '' : store.player.avatar)
       const playerAvatarFile = ref(null)
       const builtinTools = ref([])
+      const approvalRejectText = ref('')
 
       async function loadBuiltinTools() {
         try {
           const data = await api.get('/api/builtin-tools')
+          approvalRejectText.value = data.approval_reject_text || ''
           builtinTools.value = (data.tools || []).map((t) => ({
             key: t.key,
             name: t.name,
@@ -51,7 +53,7 @@
           })),
         }))
         try {
-          await api.put('/api/builtin-tools/form', { tools })
+          await api.put('/api/builtin-tools/form', { tools, approval_reject_text: approvalRejectText.value })
           await loadBuiltinTools()
           store.notify('已保存，内置工具配置立即生效', 'ok')
         } catch (e) {
@@ -114,7 +116,7 @@
         }
       }
 
-      return { store, playerName, playerAvatar, playerAvatarFile, savePlayer, saveMultimodal, saveAutoTitle, uploadPlayerAvatar, onPlayerAvatarFile, builtinTools, addParam, removeParam, saveBuiltinTools, applyTheme: store.applyTheme, saveUi: store.saveUi }
+      return { store, playerName, playerAvatar, playerAvatarFile, savePlayer, saveMultimodal, saveAutoTitle, uploadPlayerAvatar, onPlayerAvatarFile, builtinTools, approvalRejectText, addParam, removeParam, saveBuiltinTools, applyTheme: store.applyTheme, saveUi: store.saveUi }
     },
   }
 

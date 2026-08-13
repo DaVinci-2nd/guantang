@@ -1,15 +1,14 @@
 workdir_add:
   approval: true
-  required: [path]
   description: 添加一个本地文件夹作为工作目录。文件夹必须真实存在且可读，添加成功后即可在该文件夹内读取和修改文件、执行命令。可添加多个工作目录。
   parameters:
     path:
       type: string
       description: 要添加的文件夹的绝对路径
-
+  required:
+  - path
 workdir_change:
   approval: true
-  required: [path, new_path]
   description: 修改工作目录，把列表中已有的某个工作目录替换为另一个文件夹。新文件夹必须真实存在且可读。
   parameters:
     path:
@@ -18,19 +17,20 @@ workdir_change:
     new_path:
       type: string
       description: 替换后的新文件夹绝对路径
-
+  required:
+  - path
+  - new_path
 workdir_remove:
   approval: true
-  required: [path]
   description: 删除一个已经添加的工作目录，之后不再允许访问该文件夹。可以删除到没有任何工作目录。
   parameters:
     path:
       type: string
       description: 要移除的工作目录绝对路径
-
+  required:
+  - path
 list_dir:
   approval: false
-  required: [path]
   description: 列出文件夹内的条目，查看某个文件夹里有哪些文件和子文件夹。只允许查看已添加工作目录内的位置。
   parameters:
     path:
@@ -39,10 +39,10 @@ list_dir:
     pattern:
       type: string
       description: 可选，通配符过滤，例如 *.py
-
+  required:
+  - path
 read_file:
   approval: false
-  required: [path]
   description: 读取文件内容，支持常见文本格式。只允许读取已添加工作目录内的文件。
   parameters:
     path:
@@ -51,10 +51,10 @@ read_file:
     max_chars:
       type: integer
       description: 可选，最多读取的字符数，默认 8000
-
+  required:
+  - path
 create_file:
   approval: true
-  required: [path, content]
   description: 创建新文件并写入文本内容。只允许在已添加工作目录内创建文件。
   parameters:
     path:
@@ -63,10 +63,11 @@ create_file:
     content:
       type: string
       description: 要写入的完整文本内容
-
+  required:
+  - path
+  - content
 edit_text:
   approval: true
-  required: [path, old_text, new_text]
   description: 修改文件内的一段文本：把指定的旧文本替换为新文本；旧文本留空表示在文件末尾追加新文本。只允许修改已添加工作目录内的文件。
   parameters:
     path:
@@ -78,10 +79,12 @@ edit_text:
     new_text:
       type: string
       description: 替换后的新文本，或要追加的内容
-
+  required:
+  - path
+  - old_text
+  - new_text
 delete_path:
   approval: true
-  required: [path]
   description: 删除文件或文件夹。只允许删除已添加工作目录内的路径。
   parameters:
     path:
@@ -90,19 +93,19 @@ delete_path:
     recursive:
       type: boolean
       description: 可选，删除非空文件夹时需要设为 true
-
+  required:
+  - path
 create_dir:
   approval: true
-  required: [path]
   description: 创建新文件夹。只允许在已添加工作目录内创建文件夹。
   parameters:
     path:
       type: string
       description: 新文件夹的绝对路径，或相对于工作目录的路径
-
+  required:
+  - path
 run_command:
   approval: true
-  required: [command]
   description: 在已添加的工作目录内运行命令行指令，用于查看文件、运行程序、安装依赖等。执行目录会被限制在工作目录范围内。
   parameters:
     command:
@@ -111,3 +114,8 @@ run_command:
     cwd:
       type: string
       description: 可选，执行目录，必须是工作目录或其子文件夹；默认使用第一个工作目录
+  required:
+  - command
+approval_reject_text: '该操作已被手动拒绝。
+
+  被拒绝的操作：{operation}'

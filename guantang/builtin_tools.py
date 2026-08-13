@@ -22,6 +22,8 @@ MAX_LIST_ITEMS = 200
 COMMAND_TIMEOUT = 60
 MAX_COMMAND_OUTPUT = 4000
 
+DEFAULT_APPROVAL_REJECT_TEXT = "该操作已被手动拒绝。\n被拒绝的操作：{operation}"
+
 
 def _norm(path: str) -> str:
     return os.path.normcase(str(path))
@@ -521,6 +523,8 @@ def parse_tools(text: str) -> list[dict]:
         raise ValueError("工具配置必须是对象结构")
     result = []
     for key, item in data.items():
+        if key == "approval_reject_text":
+            continue
         if not isinstance(item, dict):
             raise ValueError(f"工具 {key} 的配置格式错误")
         desc = str(item.get("description") or "").strip()
@@ -542,7 +546,7 @@ def parse_tools(text: str) -> list[dict]:
     return result
 
 
-def tools_to_yaml(tools: list[dict]) -> str:
+def tools_to_yaml(tools: list[dict], approval_reject_text: str | None = None) -> str:
     data = {}
     for t in tools:
         key = str(t.get("key") or "").strip()
@@ -577,7 +581,20 @@ def tools_to_yaml(tools: list[dict]) -> str:
         if name != key:
             item["name"] = name
         data[key] = item
+    if approval_reject_text is not None:
+        data["approval_reject_text"] = approval_reject_text
     return yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
+
+
+def read_approval_reject_text(text: str) -> str:
+    try:
+        data = yaml.safe_load(text or "") or {}
+    except Exception:
+        return DEFAULT_APPROVAL_REJECT_TEXT
+    value = data.get("approval_reject_text")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return DEFAULT_APPROVAL_REJECT_TEXT
 
 
 def to_openai_tools(defs: list[dict]) -> list[dict]:

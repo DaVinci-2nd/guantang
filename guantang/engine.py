@@ -1,6 +1,6 @@
 import json
 
-from .builtin_tools import build_approval_diff, describe_operation, execute_builtin, to_openai_tools
+from .builtin_tools import DEFAULT_APPROVAL_REJECT_TEXT, build_approval_diff, describe_operation, execute_builtin, to_openai_tools
 from .mcp_client import MCPManager
 from .providers.base import ToolCall
 from .search import search
@@ -50,6 +50,7 @@ class Engine:
         self.search_skills = search_skills or []
         self.builtin_loader = builtin_loader
         self.approval_handler = approval_handler
+        self.approval_reject_text = ""
         self.workdirs = workdirs if workdirs is not None else []
 
     async def run(self, system_prompt: str, player_message: str, history: list[dict] | None = None, thinking=None):
@@ -132,7 +133,8 @@ class Engine:
             diff = build_approval_diff(name, arguments, self.workdirs)
             decision = await self.approval_handler(name, arguments, operation, diff)
             if decision == "reject":
-                return f"该操作已被拒绝。\n被拒绝的操作：{operation}"
+                template = self.approval_reject_text or DEFAULT_APPROVAL_REJECT_TEXT
+                return template.format(operation=operation)
             if decision == "reject_stop":
                 raise ApprovalStopped(name, arguments)
         return await execute_builtin(name, arguments, self.workdirs)
