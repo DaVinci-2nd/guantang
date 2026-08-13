@@ -646,7 +646,7 @@
       }
 
       function renderMarkdown(text) {
-        try { return marked.parse(text || '', { breaks: true }) } catch (e) { return text || '' }
+        return window.renderMarkdown(text)
       }
 
       async function onModeChange(e) {

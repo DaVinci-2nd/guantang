@@ -1,6 +1,14 @@
 (function () {
   const { reactive, ref, computed, watch, nextTick } = Vue
 
+  window.renderMarkdown = function (text) {
+    try {
+      return marked.parse(text || '', { gfm: true, breaks: true })
+    } catch (e) {
+      return text || ''
+    }
+  }
+
   const ChatList = {
     template: document.getElementById('tpl-chat').innerHTML,
     setup() {
@@ -77,9 +85,16 @@
       return { store }
     },
     data() {
-      return { showReasoning: false, showTools: false }
+      return { showTools: false }
     },
     methods: {
+      bubbleBlocks(msg) {
+        if (msg.blocks && msg.blocks.length) return msg.blocks
+        const blocks = []
+        if (msg.reasoning) blocks.push({ type: 'reasoning', text: msg.reasoning })
+        if (msg.content) blocks.push({ type: 'text', text: msg.content })
+        return blocks
+      },
       characterFor(msg) {
         const role = store.roles.find((r) => r.name === msg.character_name)
         if (role) return role
@@ -92,7 +107,7 @@
         return `${d.getMonth() + 1}-${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`
       },
       renderMarkdown(text) {
-        try { return marked.parse(text || '', { breaks: true }) } catch (e) { return text || '' }
+        return window.renderMarkdown(text)
       },
       prettyArgs(args) {
         if (!args) return ''

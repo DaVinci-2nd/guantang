@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>灌汤</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23444444' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z'/%3E%3Cpath d='M9 11h6'/%3E%3Cpath d='M9 15h4'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/style.css?v=20260810">
+<link rel="stylesheet" href="/static/style.css?v=20260815">
 </head>
 <body>
 <div id="app"></div>
@@ -467,21 +467,18 @@
 </template>
 
 <template id="tpl-message-bubble">
-  <div class="msg" :class="msg.sender">
+  <div class="msg" :class="msg.sender === 'player' ? 'align-right' : ''">
     <template v-if="msg.sender === 'character'">
       <role-avatar :role="characterFor(msg)" :size="30"></role-avatar>
+    </template>
+    <template v-else>
+      <player-avatar :size="30"></player-avatar>
     </template>
     <div class="msg-body">
       <div class="msg-meta">
         <span class="msg-name">{{ msg.sender === 'character' ? (msg.character_name || '角色') : store.player.name }}</span>
         <span class="msg-time">{{ formatTime(msg.created_at) }}</span>
         <span v-if="msg.interrupted" class="msg-interrupted">已中断</span>
-      </div>
-      <div v-if="msg.reasoning && (!msg.blocks || !msg.blocks.length)" class="reasoning">
-        <button class="reasoning-toggle" @click="showReasoning = !showReasoning">
-          <icon name="eye"></icon><span>思考过程</span><icon name="chevron_down"></icon>
-        </button>
-        <pre v-if="showReasoning" class="reasoning-text">{{ msg.reasoning }}</pre>
       </div>
       <div v-if="msg.attachments && msg.attachments.length" class="msg-attachments">
         <template v-for="(a, i) in msg.attachments" :key="i">
@@ -491,8 +488,8 @@
           </span>
         </template>
       </div>
-      <div v-if="msg.blocks && msg.blocks.length" class="msg-blocks">
-        <template v-for="(b, i) in msg.blocks" :key="i">
+      <div v-if="bubbleBlocks(msg).length" class="msg-blocks">
+        <template v-for="(b, i) in bubbleBlocks(msg)" :key="i">
           <div v-if="b.type === 'reasoning' && b.text" class="reasoning">
             <button class="reasoning-toggle" @click="b.open = !b.open">
               <icon name="eye"></icon><span>思考过程</span><icon name="chevron_down"></icon>
@@ -517,21 +514,18 @@
           </div>
         </template>
       </div>
-      <template v-else>
-        <div v-if="msg.tool_events && msg.tool_events.length" class="tool-events">
-          <button class="reasoning-toggle" @click="showTools = !showTools">
-            <icon name="skill"></icon><span>工具调用 {{ msg.tool_events.length }}</span><icon name="chevron_down"></icon>
-          </button>
-          <div v-if="showTools" class="tool-list">
-            <div v-for="(t, i) in msg.tool_events" :key="i" class="tool-item">
-              <div class="tool-name"><icon name="skill"></icon><span>{{ t.name }}</span></div>
-              <div v-if="t.arguments && Object.keys(t.arguments).length" class="tool-args">参数：{{ prettyArgs(t.arguments) }}</div>
-              <pre class="tool-result">{{ t.result }}</pre>
-            </div>
+      <div v-if="msg.tool_events && msg.tool_events.length && !(msg.blocks && msg.blocks.length)" class="tool-events">
+        <button class="reasoning-toggle" @click="showTools = !showTools">
+          <icon name="skill"></icon><span>工具调用 {{ msg.tool_events.length }}</span><icon name="chevron_down"></icon>
+        </button>
+        <div v-if="showTools" class="tool-list">
+          <div v-for="(t, i) in msg.tool_events" :key="i" class="tool-item">
+            <div class="tool-name"><icon name="skill"></icon><span>{{ t.name }}</span></div>
+            <div v-if="t.arguments && Object.keys(t.arguments).length" class="tool-args">参数：{{ prettyArgs(t.arguments) }}</div>
+            <pre class="tool-result">{{ t.result }}</pre>
           </div>
         </div>
-        <div v-if="msg.content" class="msg-content markdown" v-html="renderMarkdown(msg.content)"></div>
-      </template>
+      </div>
       <div v-if="streaming" class="streaming-hint">正在回复<span class="dots">…</span></div>
       <div class="msg-actions">
         <button class="icon-btn small" title="复制" @click="copyText(msg)">
@@ -763,16 +757,16 @@
 
 <script src="https://unpkg.com/vue@3.4.38/dist/vue.global.prod.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
-<script src="/static/icons.js?v=20260810"></script>
-<script src="/static/api.js?v=20260810"></script>
-<script src="/static/store.js?v=20260810"></script>
-<script src="/static/views/common.js?v=20260810"></script>
-<script src="/static/views/chat.js?v=20260810"></script>
-<script src="/static/views/roles.js?v=20260810"></script>
-<script src="/static/views/skills.js?v=20260810"></script>
-<script src="/static/views/modes.js?v=20260810"></script>
-<script src="/static/views/models.js?v=20260810"></script>
-<script src="/static/views/settings.js?v=20260810"></script>
-<script src="/static/app.js?v=20260810"></script>
+<script src="/static/icons.js?v=20260815"></script>
+<script src="/static/api.js?v=20260815"></script>
+<script src="/static/store.js?v=20260815"></script>
+<script src="/static/views/common.js?v=20260815"></script>
+<script src="/static/views/chat.js?v=20260815"></script>
+<script src="/static/views/roles.js?v=20260815"></script>
+<script src="/static/views/skills.js?v=20260815"></script>
+<script src="/static/views/modes.js?v=20260815"></script>
+<script src="/static/views/models.js?v=20260815"></script>
+<script src="/static/views/settings.js?v=20260815"></script>
+<script src="/static/app.js?v=20260815"></script>
 </body>
 </html>
