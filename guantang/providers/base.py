@@ -78,6 +78,15 @@ class BaseProvider:
                     ) as resp:
                         if resp.status_code != 200:
                             body = (await resp.aread()).decode("utf-8", errors="replace")
+                            lowered = body.lower()
+                            if resp.status_code == 400 and "max_tokens" in lowered and "valid range" in lowered:
+                                limit = self._extract_max_tokens_limit(body)
+                                if limit is not None and max_tokens is not None and max_tokens > limit:
+                                    max_tokens = limit
+                                    payload = self._payload(messages, tools, temperature, max_tokens, thinking=thinking)
+                                    entry["request"]["max_tokens"] = max_tokens
+                                    send_log.append_event(entry, ["warning", f"max_tokens 超出模型上限，已钳制为 {limit}"])
+                                    continue
                             raise ProviderError(f"HTTP {resp.status_code}：{body[:500]}")
                         async for line in resp.aiter_lines():
                             line = line.strip()
@@ -92,7 +101,10 @@ class BaseProvider:
                                 send_log.append_event(entry, ["warning", f"SSE 数据解析失败：{e}"])
                                 continue
                             for event in self._parse_chunk(chunk, accum):
-                                send_log.append_event(entry, self._summarize(event))
+                                summary = self._summarize(event)
+                                if summary[0] == "done":
+                                    entry["finish_reason"] = summary[1]
+                                send_log.append_event(entry, summary)
                                 yield event
                         if accum:
                             send_log.append_event(entry, ["warning", "流结束时存在未完成的工具调用，已强制取出"])
@@ -109,6 +121,18 @@ class BaseProvider:
         except Exception as e:
             send_log.finish(entry, ok=False, error=str(e))
             raise
+
+    @staticmethod
+    def _extract_max_tokens_limit(body: str) -> int | None:
+        import re
+
+        m = re.search(r"range of max_tokens is \[\d+, (\d+)\]", body)
+        if m:
+            return int(m.group(1))
+        m = re.search(r"max_tokens is \[\d+, (\d+)\]", body)
+        if m:
+            return int(m.group(1))
+        return None
 
     @staticmethod
     def _summarize(event: tuple) -> list:

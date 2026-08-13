@@ -873,6 +873,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 ctx.engine.approval_handler = approval_handler
                 ctx.engine.approval_reject_text = ctx.approval_reject_text()
                 ctx.engine.workdirs = workdirs
+                ctx.engine.temperature = role.get("temperature") if role.get("temperature") is not None else cfg.get("temperature")
+                ctx.engine.max_tokens = role.get("max_tokens") if role.get("max_tokens") is not None else cfg.get("max_tokens")
                 set_context(session_id=session_id, role=role["name"], model=model_def.get("model", ""), purpose="chat")
                 system = ctx.build_system(session, role, model_def)
                 thinking = build_thinking(

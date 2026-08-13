@@ -4,7 +4,7 @@ import time
 from contextvars import ContextVar
 
 MAX_PER_SESSION = 100
-MAX_EVENTS = 200
+MAX_EVENTS = 2000
 
 _send_ctx: ContextVar = ContextVar("guantang_send_ctx", default={})
 

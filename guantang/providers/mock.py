@@ -17,7 +17,10 @@ class MockProvider(BaseProvider):
         entry = send_log.start(self.endpoint, self.model, messages, tools, temperature, max_tokens, thinking, context=get_context())
         try:
             async for event in self._mock_events(messages, tools):
-                send_log.append_event(entry, self._summarize(event))
+                summary = self._summarize(event)
+                if summary[0] == "done":
+                    entry["finish_reason"] = summary[1]
+                send_log.append_event(entry, summary)
                 yield event
             send_log.finish(entry, ok=True)
         except Exception as e:
