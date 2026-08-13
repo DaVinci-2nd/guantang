@@ -849,10 +849,14 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                             tool_events.append({"name": event[1], "arguments": event[2], "result": ""})
                             blocks.append({"type": "tool", "name": event[1], "arguments": event[2], "result": ""})
                         elif kind == "tool_result":
-                            if tool_events:
-                                tool_events[-1]["result"] = event[2]
-                            if blocks and blocks[-1]["type"] == "tool":
-                                blocks[-1]["result"] = event[2]
+                            for te in reversed(tool_events):
+                                if te["name"] == event[1] and not te.get("result"):
+                                    te["result"] = event[2]
+                                    break
+                            for blk in reversed(blocks):
+                                if blk["type"] == "tool" and blk["name"] == event[1] and not blk.get("result"):
+                                    blk["result"] = event[2]
+                                    break
                             await ws.send_json({"type": "tool_result", "name": event[1], "text": event[2][:800]})
                 except ProviderError as e:
                     try:

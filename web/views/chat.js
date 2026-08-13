@@ -415,13 +415,13 @@
             aiMsg.tool_events.push({ name: data.name, arguments: data.arguments, result: '' })
             aiMsg.blocks.push({ type: 'tool', name: data.name, arguments: data.arguments, status: 'running', result: '', open: false })
           } else if (data.type === 'tool_exec') {
-            const last = aiMsg.tool_events[aiMsg.tool_events.length - 1]
-            if (last) last.result = '执行中…'
+            const te = [...aiMsg.tool_events].reverse().find((t) => t.name === data.name && (t.result === '' || t.result === '执行中…'))
+            if (te) te.result = '执行中…'
             scrollBottom()
           } else if (data.type === 'tool_result') {
-            const last = aiMsg.tool_events[aiMsg.tool_events.length - 1]
-            if (last) last.result = data.text
-            const tb = [...aiMsg.blocks].reverse().find((b) => b.type === 'tool')
+            const te = [...aiMsg.tool_events].reverse().find((t) => t.name === data.name && (t.result === '' || t.result === '执行中…'))
+            if (te) te.result = data.text
+            const tb = [...aiMsg.blocks].reverse().find((b) => b.type === 'tool' && b.name === data.name && b.status === 'running')
             if (tb) {
               tb.status = 'done'
               tb.result = data.text
