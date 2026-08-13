@@ -12,16 +12,23 @@
   window.renderMarkdown = function (text) {
     try {
       const renderer = new marked.Renderer()
-      const origCode = renderer.code.bind(renderer)
       renderer.code = function (code, infostring) {
-        const lang = (infostring || 'txt').split(/\s+/)[0] || 'txt'
+        const lang = (infostring || '').split(/\s+/)[0] || ''
+        let body = escapeHtml(code)
+        if (lang && window.hljs && hljs.getLanguage(lang)) {
+          try {
+            body = hljs.highlight(code, { language: lang, ignoreIllegals: true }).value
+          } catch (e) {
+            body = escapeHtml(code)
+          }
+        }
         return (
           '<div class="code-block">' +
           '<div class="code-block-head">' +
-          '<span class="code-block-lang">' + escapeHtml(lang) + '</span>' +
+          '<span class="code-block-lang">' + escapeHtml(lang || 'txt') + '</span>' +
           '<button type="button" class="code-block-copy" title="复制代码">复制</button>' +
           '</div>' +
-          '<pre><code class="language-' + escapeHtml(lang) + '">' + escapeHtml(code) + '</code></pre>' +
+          '<pre><code class="language-' + escapeHtml(lang || 'txt') + '">' + body + '</code></pre>' +
           '</div>'
         )
       }
