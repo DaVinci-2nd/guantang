@@ -52,38 +52,70 @@ class BaseProvider:
         return payload
 
     async def stream_chat(self, messages, tools=None, temperature=None, max_tokens=None, thinking=None):
+        payload = self._payload(messages, tools, temperature, max_tokens, thinking=thinking)
+        from ..send_log import get_context, send_log
+
+        entry = send_log.start(
+            self.endpoint,
+            self.model,
+            payload.get("messages"),
+            payload.get("tools"),
+            payload.get("temperature"),
+            payload.get("max_tokens"),
+            payload.get("thinking"),
+            context=get_context(),
+        )
         accum = {}
         last_error = None
-        for attempt in range(self.max_retries + 1):
-            try:
-                async with self._client.stream(
-                    "POST",
-                    self.endpoint,
-                    headers=self._headers(),
-                    json=self._payload(messages, tools, temperature, max_tokens, thinking=thinking),
-                ) as resp:
-                    if resp.status_code != 200:
-                        body = (await resp.aread()).decode("utf-8", errors="replace")
-                        raise ProviderError(f"HTTP {resp.status_code}：{body[:500]}")
-                    async for line in resp.aiter_lines():
-                        line = line.strip()
-                        if not line.startswith("data:"):
-                            continue
-                        data = line[5:].strip()
-                        if data == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(data)
-                        except json.JSONDecodeError:
-                            continue
-                        for event in self._parse_chunk(chunk, accum):
-                            yield event
-                return
-            except (httpx.HTTPError, ProviderError, asyncio.CancelledError) as e:
-                last_error = e
-                if attempt < self.max_retries:
-                    await asyncio.sleep(2**attempt)
-        raise ProviderError(f"请求失败（已重试 {self.max_retries} 次）：{last_error}")
+        try:
+            for attempt in range(self.max_retries + 1):
+                try:
+                    async with self._client.stream(
+                        "POST",
+                        self.endpoint,
+                        headers=self._headers(),
+                        json=payload,
+                    ) as resp:
+                        if resp.status_code != 200:
+                            body = (await resp.aread()).decode("utf-8", errors="replace")
+                            raise ProviderError(f"HTTP {resp.status_code}：{body[:500]}")
+                        async for line in resp.aiter_lines():
+                            line = line.strip()
+                            if not line.startswith("data:"):
+                                continue
+                            data = line[5:].strip()
+                            if data == "[DONE]":
+                                break
+                            try:
+                                chunk = json.loads(data)
+                            except json.JSONDecodeError:
+                                continue
+                            for event in self._parse_chunk(chunk, accum):
+                                send_log.append_event(entry, self._summarize(event))
+                                yield event
+                    send_log.finish(entry, ok=True)
+                    return
+                except (httpx.HTTPError, ProviderError, asyncio.CancelledError) as e:
+                    last_error = e
+                    if attempt < self.max_retries:
+                        await asyncio.sleep(2**attempt)
+            raise ProviderError(f"请求失败（已重试 {self.max_retries} 次）：{last_error}")
+        except Exception as e:
+            send_log.finish(entry, ok=False, error=str(e))
+            raise
+
+    @staticmethod
+    def _summarize(event: tuple) -> list:
+        kind = event[0]
+        if kind in ("reasoning", "text"):
+            return [kind, event[1][:200]]
+        if kind == "tool_call":
+            return ["tool_call", event[1].name, event[1].arguments]
+        if kind == "tool_result":
+            return ["tool_result", event[1][:300]]
+        if kind == "done":
+            return ["done", event[1]]
+        return [kind]
 
     def _parse_chunk(self, chunk: dict, accum: dict):
         events = []

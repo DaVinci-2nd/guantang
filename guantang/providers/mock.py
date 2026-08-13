@@ -12,6 +12,19 @@ class MockProvider(BaseProvider):
         super().__init__("http://mock.local", "mock", model=model, timeout=timeout, max_retries=max_retries)
 
     async def stream_chat(self, messages, tools=None, temperature=None, max_tokens=None, thinking=None):
+        from ..send_log import get_context, send_log
+
+        entry = send_log.start(self.endpoint, self.model, messages, tools, temperature, max_tokens, thinking, context=get_context())
+        try:
+            async for event in self._mock_events(messages, tools):
+                send_log.append_event(entry, self._summarize(event))
+                yield event
+            send_log.finish(entry, ok=True)
+        except Exception as e:
+            send_log.finish(entry, ok=False, error=str(e))
+            raise
+
+    async def _mock_events(self, messages, tools):
         last = messages[-1]
         content = last.get("content") or ""
         if isinstance(content, list):

@@ -82,18 +82,18 @@ async def describe_operation(name: str, args: dict, tool_def=None) -> str:
     if name == "workdir_remove":
         return f"删除工作目录：{path}"
     if name == "create_file":
-        return f"创建文件：{path}（将写入 {len(content)} 个字符）"
+        return f"创建文件：{path}，将写入 {len(content)} 个字符"
     if name == "edit_text":
         if old_text:
-            return f"修改文件：{path}（把「{old_text[:80]}」替换为「{new_text[:80]}」）"
-        return f"修改文件：{path}（在末尾追加 {len(new_text)} 个字符）"
+            return f"修改文件：{path}，把「{old_text[:80]}」替换为「{new_text[:80]}」"
+        return f"修改文件：{path}，在末尾追加 {len(new_text)} 个字符"
     if name == "delete_path":
         recursive = "是" if args.get("recursive") else "否"
-        return f"删除：{path}（递归删除：{recursive}）"
+        return f"删除：{path}，递归删除：{recursive}"
     if name == "create_dir":
         return f"创建文件夹：{path}"
     if name == "run_command":
-        return f"执行命令：{command}（执行目录：{cwd or '默认工作目录'}）"
+        return f"执行命令：{command}，执行目录：{cwd or '默认工作目录'}"
     if tool_def:
         return f"{tool_def.get('description') or name}，参数：{args}"
     return f"调用工具：{name}，参数：{args}"
@@ -109,8 +109,8 @@ def _fmt_bytes(n: int) -> str:
 
 def _workdirs_status(workdirs) -> str:
     if not workdirs:
-        return "（当前没有任何工作目录）"
-    lines = [f"（当前共 {len(workdirs)} 个工作目录）"]
+        return "当前没有任何工作目录"
+    lines = [f"当前共 {len(workdirs)} 个工作目录"]
     lines += [f"  {i + 1}. {w}" for i, w in enumerate(workdirs)]
     return "\n".join(lines)
 
@@ -122,7 +122,7 @@ async def execute_workdir_add(args, workdirs):
     try:
         p = Path(raw).expanduser().resolve()
     except Exception as e:
-        return f"添加失败：路径解析错误（{e}）"
+        return f"添加失败：路径解析错误：{e}"
     if not p.is_dir():
         return f"添加失败：目录不存在或不是文件夹：{p}"
     if not os.access(str(p), os.R_OK):
@@ -143,7 +143,7 @@ async def execute_workdir_change(args, workdirs):
     try:
         new_p = Path(new_raw).expanduser().resolve()
     except Exception as e:
-        return f"修改失败：新路径解析错误（{e}）"
+        return f"修改失败：新路径解析错误：{e}"
     if not new_p.is_dir():
         return f"修改失败：新目录不存在或不是文件夹：{new_p}"
     if not os.access(str(new_p), os.R_OK):
@@ -161,7 +161,7 @@ async def execute_workdir_remove(args, workdirs):
     try:
         p = Path(raw).expanduser().resolve()
     except Exception as e:
-        return f"删除失败：路径解析错误（{e}）"
+        return f"删除失败：路径解析错误：{e}"
     matched = next((i for i, w in enumerate(workdirs) if _norm(w) == _norm(p)), None)
     if matched is None:
         return f"删除失败：{raw} 不在当前工作目录列表中\n{_workdirs_status(workdirs)}"
@@ -194,14 +194,14 @@ async def execute_list_dir(args, workdirs):
                 size = _fmt_bytes(e.stat().st_size)
             except OSError:
                 size = ""
-            items.append(f"[文件] {e.name}（{size}）")
+            items.append(f"[文件] {e.name}，{size}")
     if len(items) > MAX_LIST_ITEMS:
         items = items[:MAX_LIST_ITEMS]
-        items.append(f"……（共 {len(entries)} 个匹配条目，仅显示前 {MAX_LIST_ITEMS} 个）")
-    head = f"{p}（{len(entries)} 个条目）"
+        items.append(f"……共 {len(entries)} 个匹配条目，仅显示前 {MAX_LIST_ITEMS} 个")
+    head = f"{p}，共 {len(entries)} 个条目"
     if pattern:
         head += f"，过滤模式 {pattern}"
-    return "\n".join([head] + items) or f"{p}（没有匹配的条目）"
+    return "\n".join([head] + items) or f"{p}：没有匹配的条目"
 
 
 async def execute_read_file(args, workdirs):
@@ -216,7 +216,7 @@ async def execute_read_file(args, workdirs):
     try:
         size = p.stat().st_size
         if size > MAX_READ_BYTES:
-            return f"读取失败：文件过大（{_fmt_bytes(size)}），仅支持 {_fmt_bytes(MAX_READ_BYTES)} 以内的文本文件"
+            return f"读取失败：文件过大：{_fmt_bytes(size)}，仅支持 {_fmt_bytes(MAX_READ_BYTES)} 以内的文本文件"
         raw = p.read_bytes()
     except OSError as e:
         return f"读取失败：{e}"
@@ -227,7 +227,7 @@ async def execute_read_file(args, workdirs):
     max_chars = max(1, min(max_chars, DEFAULT_MAX_CHARS))
     if len(text) > max_chars:
         text = text[:max_chars]
-        note = f"\n（文件共 {len(text)} 字符，已截取前 {max_chars} 字符）"
+        note = f"\n文件共 {len(text)} 字符，已截取前 {max_chars} 字符"
     else:
         note = ""
     return f"=== {p} ===\n{text}{note}"
@@ -242,14 +242,14 @@ async def execute_create_file(args, workdirs):
     if err:
         return err
     if p.exists():
-        return f"创建失败：文件已存在：{p}（如需修改请使用 edit_text）"
+        return f"创建失败：文件已存在：{p}"
     if not p.parent.is_dir():
         return f"创建失败：上级文件夹不存在：{p.parent}"
     try:
         p.write_text(content, encoding="utf-8")
     except OSError as e:
         return f"创建失败：{e}"
-    return f"已创建文件：{p}（{len(content)} 个字符，{_fmt_bytes(p.stat().st_size)}）"
+    return f"已创建文件：{p}，{len(content)} 个字符，{_fmt_bytes(p.stat().st_size)}"
 
 
 async def execute_edit_text(args, workdirs):
@@ -278,7 +278,7 @@ async def execute_edit_text(args, workdirs):
         p.write_text(content, encoding="utf-8")
     except OSError as e:
         return f"修改失败：{e}"
-    return f"已修改文件：{p}（{mode}）"
+    return f"已修改文件：{p}，{mode}"
 
 
 async def execute_delete_path(args, workdirs):
@@ -292,7 +292,7 @@ async def execute_delete_path(args, workdirs):
     try:
         if p.is_dir():
             if not recursive and any(p.iterdir()):
-                return f"删除失败：文件夹非空：{p}（如需递归删除请设置 recursive 为 true）"
+                return f"删除失败：文件夹非空：{p}"
             shutil.rmtree(str(p))
             return f"已删除文件夹：{p}"
         p.unlink()
@@ -367,16 +367,16 @@ async def execute_run_command(args, workdirs):
             timeout=COMMAND_TIMEOUT,
         )
     except subprocess.TimeoutExpired:
-        return f"命令执行超时（{COMMAND_TIMEOUT} 秒）"
+        return f"命令执行超时：{COMMAND_TIMEOUT} 秒"
     except OSError as e:
         return f"执行失败：{e}"
     out = (proc.stdout or "") + (proc.stderr or "")
     if len(out) > MAX_COMMAND_OUTPUT:
-        out = out[:MAX_COMMAND_OUTPUT] + f"\n……（输出过长，已截取前 {MAX_COMMAND_OUTPUT} 字符）"
+        out = out[:MAX_COMMAND_OUTPUT] + f"\n……输出过长，已截取前 {MAX_COMMAND_OUTPUT} 字符"
     head = f"执行目录：{cwd}\n命令：{command}\n退出码：{proc.returncode}"
     if proc.returncode != 0:
-        return f"命令执行失败（退出码 {proc.returncode}）：\n{head}\n{out or '（无输出）'}"
-    return f"命令执行成功：\n{head}\n{out or '（无输出）'}"
+        return f"命令执行失败，退出码 {proc.returncode}：\n{head}\n{out or '无输出'}"
+    return f"命令执行成功：\n{head}\n{out or '无输出'}"
 
 
 EXECUTORS = {

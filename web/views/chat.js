@@ -476,7 +476,7 @@
           aiMsg.blocks.forEach((b) => {
             if (b.type === 'tool' && b.status === 'pending') {
               b.status = 'done'
-              b.result = '（已中断）'
+              b.result = '已中断'
             }
           })
           if (aiMsg.streaming) {
@@ -664,6 +664,7 @@
         if (!sid) return
         try {
           debugData.value = await api.get(`/api/sessions/${sid}/debug`)
+          if (debugData.value.send_log) debugData.value.send_log.forEach((s) => { s.open = true })
         } catch (e) {
           store.notify(e.message)
         }

@@ -22,12 +22,13 @@ from .prompts import PromptAssembler
 from .providers.base import ProviderError
 from .providers.factory import build_provider
 from .roles import RoleStore
+from .send_log import send_log, set_context
 from .skills import SkillStore
 from .storage import Storage
 from .thinking_presets import THINKING_PRESETS, build_thinking
 from .zh_translator import ZhTranslator
 
-REJECT_STOP_TEXT = "玩家拒绝了此操作并中断了对话。"
+REJECT_STOP_TEXT = "此操作已被拒绝，对话已中断。"
 
 
 class RolePayload(BaseModel):
@@ -238,6 +239,7 @@ class AppContext:
         ]
         if not images:
             return None
+        set_context(session_id=msg.get("session_id"), role="图片识别", model=mm.get("model", ""), purpose="recognize")
 
         def mark_and_save(extra_text: str):
             attachments = list(msg.get("attachments") or [])
@@ -320,6 +322,7 @@ class AppContext:
             model_def = self.models.get(at["model"])
             if not model_def:
                 return
+            set_context(session_id=session_id, role="自动标题", model=model_def.get("model", ""), purpose="auto_title")
             messages = self.storage.list_messages(session_id)
             mode = int(at.get("mode", 1))
             text = ""
@@ -404,6 +407,7 @@ class AppContext:
 def create_app(cfg: Config | None = None) -> FastAPI:
     cfg = cfg or Config()
     ctx = AppContext(cfg)
+    send_log.configure(cfg.root / "data" / "send_log.db")
     app = FastAPI(title="灌汤")
     app.add_middleware(
         CORSMiddleware,
@@ -663,7 +667,6 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         model_def = None
         thinking = None
         skills = []
-        system_prompt = ""
         if role:
             model_def = ctx.models.get(role.get("model") or "")
             if model_def:
@@ -673,15 +676,6 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                     role.get("thinking_custom", ""),
                 )
             skills = ctx.resolve_skills(role) + ctx.resolve_search_skills(role)
-            mode_text = ""
-            if session.get("mode"):
-                mode = ctx.modes.get(session["mode"])
-                if mode:
-                    mode_text = mode.get("content", "")
-            model_name = model_def.get("model", "") if model_def else ""
-            system_prompt = ctx.assembler.build_system_prompt(
-                role.get("setting", ""), role["name"], cfg.player()["name"], mode_text, model_name
-            )
 
         def mask_key(data: dict) -> dict:
             out = dict(data)
@@ -700,11 +694,13 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 "timeout": cfg.get("timeout"),
                 "max_retries": cfg.get("max_retries"),
             },
-            "system_prompt": system_prompt,
             "skills": [mask_key(s) for s in skills],
+            "workdirs": session.get("workdirs") or [],
+            "builtin_tools": ctx.builtin_tools_defs(),
             "multimodal": cfg.multimodal(),
             "auto_title": cfg.auto_title(),
             "messages": ctx.storage.list_messages(session_id),
+            "send_log": send_log.for_session(session_id),
         }
 
     @app.post("/api/files")
@@ -864,6 +860,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 workdirs = session.get("workdirs") or []
                 ctx.engine.approval_handler = approval_handler
                 ctx.engine.workdirs = workdirs
+                set_context(session_id=session_id, role=role["name"], model=model_def.get("model", ""), purpose="chat")
                 system = ctx.build_system(session, role, model_def)
                 thinking = build_thinking(
                     model_def.get("model", ""),

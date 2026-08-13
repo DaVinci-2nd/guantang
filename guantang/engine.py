@@ -131,10 +131,7 @@ class Engine:
         if tool_def and tool_def.get("approval") and self.approval_handler:
             decision = await self.approval_handler(name, arguments, operation)
             if decision == "reject":
-                return (
-                    "该操作已被玩家拒绝，请尊重玩家的决定，不要继续或重复该操作，"
-                    f"可以询问玩家原因并给出其他方案。\n被拒绝的操作：{operation}"
-                )
+                return f"该操作已被拒绝。\n被拒绝的操作：{operation}"
             if decision == "reject_stop":
                 raise ApprovalStopped(name, arguments)
         return await execute_builtin(name, arguments, self.workdirs)

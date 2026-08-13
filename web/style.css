@@ -427,6 +427,17 @@ body {
   padding: 0 8px;
 }
 
+.send-log { display: flex; flex-direction: column; gap: 6px; }
+
+.send-log-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: var(--panel);
+}
+
+.send-log-body { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+
 .send-btn.abort { background: #e74c3c; }
 
 .send-btn.abort:hover { background: #c0392b; }
