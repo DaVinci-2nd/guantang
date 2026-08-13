@@ -384,6 +384,7 @@
           created_at: Date.now() / 1000,
         })
         store.messages.push(aiMsg)
+        store.streamingMsgs[sid] = aiMsg
         activeAiMsg = aiMsg
         scrollBottom(true)
 
@@ -437,6 +438,7 @@
             store.notify(data.text)
             aiMsg.streaming = false
             store.streaming = false
+            if (store.streamingMsgs[sid] === aiMsg) delete store.streamingMsgs[sid]
             ws.close()
           } else if (data.type === 'end') {
             aiMsg.streaming = false
@@ -450,6 +452,7 @@
               aiMsg.blocks = data.message.blocks
             }
             store.streaming = false
+            if (store.streamingMsgs[sid] === aiMsg) delete store.streamingMsgs[sid]
             ws.close()
             store.loadSessions().catch(() => {})
             scrollBottom()
@@ -465,6 +468,7 @@
             aiMsg.streaming = false
             aiMsg.interrupted = true
             store.streaming = false
+            if (store.streamingMsgs[sid] === aiMsg) delete store.streamingMsgs[sid]
           }
         }
         ws.onopen = () => {

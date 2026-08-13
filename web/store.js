@@ -24,6 +24,7 @@
     autoTitle: { enabled: false, model: '', prompt: '', mode: 1, rounds: 3 },
     streaming: false,
     ws: null,
+    streamingMsgs: {},
     toast: { text: '', kind: '' },
   })
 
@@ -75,7 +76,10 @@
     const s = currentSession()
     if (!s) { store.messages = []; return }
     const msgs = await api.get(`/api/sessions/${id}/messages`)
-    store.messages = msgs.map((m) => ({ ...m, key: 'h' + m.id }))
+    const list = msgs.map((m) => ({ ...m, key: 'h' + m.id }))
+    const pending = store.streamingMsgs[id]
+    if (pending) list.push(pending)
+    store.messages = list
   }
 
   async function newSession() {
