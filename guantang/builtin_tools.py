@@ -96,7 +96,7 @@ async def describe_operation(name: str, args: dict, tool_def=None) -> str:
     if name == "create_dir":
         return f"创建文件夹：{path}"
     if name == "run_command":
-        return f"执行命令：{command}，执行目录：{cwd or '默认工作目录'}"
+        return f"执行命令：{command}"
     if tool_def:
         return f"{tool_def.get('description') or name}，参数：{args}"
     return f"调用工具：{name}，参数：{args}"
@@ -205,11 +205,29 @@ def build_create_diff(args: dict, workdirs: list) -> dict | None:
     return {"path": str(p), "mode": "create", "lines": lines}
 
 
+def build_command_info(args: dict, workdirs: list) -> dict | None:
+    command = str(args.get("command") or "").strip()
+    if not command:
+        return None
+    cwd_arg = str(args.get("cwd") or "").strip()
+    if cwd_arg:
+        cwd, err = resolve_path(cwd_arg, workdirs)
+        if err:
+            cwd = cwd_arg
+        else:
+            cwd = str(cwd)
+    else:
+        cwd = str(Path(workdirs[0]).expanduser().resolve()) if workdirs else "默认工作目录"
+    return {"mode": "command", "command": command, "cwd": cwd}
+
+
 def build_approval_diff(name: str, args: dict, workdirs: list) -> dict | None:
     if name == "edit_text":
         return build_edit_diff(args, workdirs)
     if name == "create_file":
         return build_create_diff(args, workdirs)
+    if name == "run_command":
+        return build_command_info(args, workdirs)
     return None
 
 

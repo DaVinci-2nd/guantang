@@ -379,6 +379,14 @@ body {
   line-height: 1.5;
 }
 
+.command-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12px;
+}
+
 .diff-line { display: flex; gap: 6px; white-space: pre-wrap; word-break: break-word; }
 
 .diff-mark { flex-shrink: 0; width: 12px; text-align: center; user-select: none; opacity: 0.7; }

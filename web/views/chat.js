@@ -428,6 +428,19 @@
               tb.approval_diff = data.diff || null
             }
             scrollBottom()
+            if (data.diff && data.diff.mode !== 'command' && data.diff.lines && data.diff.lines.length) {
+              nextTick(() => {
+                const box = document.querySelector('.approval-box')
+                const scroll = box ? box.querySelector('.approval-diff-scroll') : null
+                if (!scroll) return
+                const first = scroll.querySelector('.diff-line.del, .diff-line.add')
+                if (first) {
+                  const r1 = first.getBoundingClientRect()
+                  const r2 = scroll.getBoundingClientRect()
+                  scroll.scrollTop = Math.max(0, scroll.scrollTop + r1.top - r2.top - 8)
+                }
+              })
+            }
           } else if (data.type === 'tool_result') {
             const te = [...aiMsg.tool_events].reverse().find((t) => t.name === data.name && (t.result === '' || t.result === '执行中…'))
             if (te) te.result = data.text
