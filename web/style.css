@@ -280,7 +280,6 @@ body {
   line-height: 1.7;
   word-break: break-word;
   overflow-wrap: anywhere;
-  white-space: pre-wrap;
   min-width: 0;
   max-width: 100%;
 }

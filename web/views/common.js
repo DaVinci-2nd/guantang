@@ -25,7 +25,7 @@
           '</div>'
         )
       }
-      return marked.parse(text || '', { gfm: true, breaks: true, renderer })
+      return marked.parse(text || '', { gfm: true, breaks: true, renderer }).replace(/\s+$/, '')
     } catch (e) {
       return text || ''
     }

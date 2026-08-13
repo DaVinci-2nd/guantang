@@ -246,7 +246,7 @@
           })
         }
         walk(el)
-        return { text, atts: editingAtts.value }
+        return { text: text.trimEnd(), atts: editingAtts.value }
       }
 
       function clearEditor() {
