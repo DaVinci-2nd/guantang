@@ -12,8 +12,9 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from .builtin_tools import parse_tools
 from .config import Config
-from .engine import Engine
+from .engine import ApprovalStopped, Engine
 from .mcp_client import MCPManager
 from .model_defs import ModelStore
 from .modes import ModeStore
@@ -25,6 +26,8 @@ from .skills import SkillStore
 from .storage import Storage
 from .thinking_presets import THINKING_PRESETS, build_thinking
 from .zh_translator import ZhTranslator
+
+REJECT_STOP_TEXT = "玩家拒绝了此操作并中断了对话。"
 
 
 class RolePayload(BaseModel):
@@ -119,6 +122,21 @@ class AppContext:
             if n in all_skills and all_skills[n].get("type") == "search" and all_skills[n].get("enabled", True)
         ]
 
+    def builtin_tools_file(self):
+        return self.cfg.root / self.cfg.get("builtin_tools_file", "prompts/builtin_tools.yaml")
+
+    def builtin_tools_text(self) -> str:
+        path = self.builtin_tools_file()
+        if path.exists():
+            return path.read_text(encoding="utf-8")
+        return ""
+
+    def builtin_tools_defs(self) -> list[dict]:
+        try:
+            return parse_tools(self.builtin_tools_text())
+        except Exception:
+            return []
+
     async def ensure(self, model_def: dict, skill_defs: list[dict], search_defs: list[dict] | None = None):
         search_defs = search_defs or []
         key = (model_def.get("name"), tuple(s["name"] for s in skill_defs), tuple(s["name"] for s in search_defs))
@@ -147,6 +165,7 @@ class AppContext:
             temperature=self.cfg.get("temperature"),
             max_tokens=self.cfg.get("max_tokens"),
             search_skills=search_defs,
+            builtin_loader=self.builtin_tools_defs,
         )
         self.provider_key = key
 
@@ -409,6 +428,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             "modes": ctx.modes.list(),
             "models": ctx.models.list(),
             "thinking_presets": THINKING_PRESETS,
+            "builtin_tools": ctx.builtin_tools_defs(),
             "sessions": ctx.storage.list_sessions(),
             "session_characters": ctx.storage.session_characters(),
             "player": cfg.player(),
@@ -708,6 +728,26 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     async def rules():
         return {"text": ""}
 
+    class BuiltinToolsPayload(BaseModel):
+        text: str
+
+    @app.get("/api/builtin-tools")
+    async def get_builtin_tools():
+        return {"text": ctx.builtin_tools_text()}
+
+    @app.put("/api/builtin-tools")
+    async def save_builtin_tools(payload: BuiltinToolsPayload):
+        try:
+            defs = parse_tools(payload.text)
+        except Exception as e:
+            raise HTTPException(400, f"工具配置格式错误：{e}")
+        if not defs:
+            raise HTTPException(400, "工具配置不能为空")
+        path = ctx.builtin_tools_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(payload.text, encoding="utf-8")
+        return {"text": payload.text, "tools": [t["name"] for t in defs]}
+
     @app.post("/api/player/avatar")
     async def upload_player_avatar(file: UploadFile):
         content = await file.read()
@@ -779,6 +819,29 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 skill_defs = ctx.resolve_skills(role)
                 search_defs = ctx.resolve_search_skills(role)
                 await ctx.ensure(model_def, skill_defs, search_defs)
+
+                async def approval_handler(name: str, arguments: dict, operation: str) -> str:
+                    approval_id = f"ap_{uuid.uuid4().hex[:10]}"
+                    await ws.send_json(
+                        {
+                            "type": "approval",
+                            "approval_id": approval_id,
+                            "name": name,
+                            "arguments": arguments,
+                            "operation": operation,
+                        }
+                    )
+                    while True:
+                        resp = await ws.receive_json()
+                        if resp.get("type") != "approval_response" or resp.get("approval_id") != approval_id:
+                            continue
+                        decision = resp.get("decision")
+                        if decision in ("allow", "reject", "reject_stop"):
+                            return decision
+
+                workdirs = session.get("workdirs") or []
+                ctx.engine.approval_handler = approval_handler
+                ctx.engine.workdirs = workdirs
                 system = ctx.build_system(session, role, model_def)
                 thinking = build_thinking(
                     model_def.get("model", ""),
@@ -863,6 +926,37 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                         await ws.send_json({"type": "error", "text": str(e)})
                     except WebSocketDisconnect:
                         pass
+                    ctx.storage.update_session(session_id, workdirs=workdirs)
+                    continue
+                except ApprovalStopped as e:
+                    if reasoning_buf:
+                        blocks.append({"type": "reasoning", "text": reasoning_buf})
+                    if text_buf:
+                        blocks.append({"type": "text", "text": text_buf})
+                    for te in reversed(tool_events):
+                        if te["name"] == e.name and not te.get("result"):
+                            te["result"] = REJECT_STOP_TEXT
+                            break
+                    for blk in reversed(blocks):
+                        if blk["type"] == "tool" and blk["name"] == e.name and not blk.get("result"):
+                            blk["result"] = REJECT_STOP_TEXT
+                            break
+                    ctx.storage.update_session(session_id, workdirs=workdirs)
+                    saved = ctx.storage.add_message(
+                        session_id,
+                        "character",
+                        reply,
+                        reasoning,
+                        tool_events,
+                        character_name=role["name"],
+                        blocks=blocks,
+                        interrupted=True,
+                    )
+                    ctx.maybe_auto_title(session_id)
+                    try:
+                        await ws.send_json({"type": "end", "message": saved, "interrupted": True})
+                    except WebSocketDisconnect:
+                        pass
                     continue
                 except WebSocketDisconnect:
                     if reasoning_buf:
@@ -880,6 +974,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                             blocks=blocks,
                             interrupted=True,
                         )
+                    ctx.storage.update_session(session_id, workdirs=workdirs)
                     ctx.maybe_auto_title(session_id)
                     raise
                 if reasoning_buf:
@@ -889,6 +984,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 saved = ctx.storage.add_message(
                     session_id, "character", reply, reasoning, tool_events, character_name=role["name"], blocks=blocks
                 )
+                ctx.storage.update_session(session_id, workdirs=workdirs)
                 ctx.maybe_auto_title(session_id, ws)
                 await ws.send_json({"type": "end", "message": saved})
         except WebSocketDisconnect:

@@ -1,5 +1,6 @@
 import json
 
+from .builtin_tools import describe_operation, execute_builtin, to_openai_tools
 from .mcp_client import MCPManager
 from .providers.base import ToolCall
 from .search import search
@@ -22,6 +23,12 @@ WEB_SEARCH_TOOL = {
 }
 
 
+class ApprovalStopped(Exception):
+    def __init__(self, name: str, arguments: dict):
+        self.name = name
+        self.arguments = arguments
+
+
 class Engine:
     def __init__(
         self,
@@ -31,6 +38,9 @@ class Engine:
         temperature: float | None = None,
         max_tokens: int | None = None,
         search_skills: list[dict] | None = None,
+        builtin_loader=None,
+        approval_handler=None,
+        workdirs: list[str] | None = None,
     ):
         self.provider = provider
         self.mcp = mcp
@@ -38,6 +48,9 @@ class Engine:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.search_skills = search_skills or []
+        self.builtin_loader = builtin_loader
+        self.approval_handler = approval_handler
+        self.workdirs = workdirs if workdirs is not None else []
 
     async def run(self, system_prompt: str, player_message: str, history: list[dict] | None = None, thinking=None):
         messages = list(history or [])
@@ -49,7 +62,8 @@ class Engine:
         messages = [{"role": "system", "content": system_prompt}] + list(messages)
 
         while True:
-            openai_tools = await self._build_openai_tools()
+            builtin_defs = self._load_builtin_defs()
+            openai_tools = await self._build_openai_tools(builtin_defs)
 
             tool_calls: list[ToolCall] = []
             reply_chunks = []
@@ -81,6 +95,8 @@ class Engine:
                 yield ("tool_exec", tc.name, tc.arguments)
                 if tc.name == "web_search":
                     result = await self._call_web_search(tc.arguments)
+                elif any(t["name"] == tc.name for t in builtin_defs):
+                    result = await self._call_builtin(tc.name, tc.arguments, builtin_defs)
                 else:
                     result = await self.mcp.call_tool(tc.name, tc.arguments)
                 yield ("tool_result", tc.name, result)
@@ -109,7 +125,30 @@ class Engine:
         )
         return result[:4000]
 
-    async def _build_openai_tools(self) -> list[dict]:
+    async def _call_builtin(self, name: str, arguments: dict, builtin_defs: list[dict]) -> str:
+        tool_def = next((t for t in builtin_defs if t["name"] == name), None)
+        operation = await describe_operation(name, arguments, tool_def)
+        if tool_def and tool_def.get("approval") and self.approval_handler:
+            decision = await self.approval_handler(name, arguments, operation)
+            if decision == "reject":
+                return (
+                    "该操作已被玩家拒绝，请尊重玩家的决定，不要继续或重复该操作，"
+                    f"可以询问玩家原因并给出其他方案。\n被拒绝的操作：{operation}"
+                )
+            if decision == "reject_stop":
+                raise ApprovalStopped(name, arguments)
+        return await execute_builtin(name, arguments, self.workdirs)
+
+    def _load_builtin_defs(self) -> list[dict]:
+        if not self.builtin_loader:
+            return []
+        try:
+            return self.builtin_loader() or []
+        except Exception:
+            return []
+
+    async def _build_openai_tools(self, builtin_defs: list[dict] | None = None) -> list[dict]:
+        builtin_defs = builtin_defs if builtin_defs is not None else self._load_builtin_defs()
         result = []
         seen = set()
         for tool in self.mcp.tools:
@@ -118,6 +157,12 @@ class Engine:
             seen.add(tool["name"])
             zh = await self.translator.translate_tool(tool)
             result.append(self.translator.to_openai_tool(tool, zh))
+        for tool in to_openai_tools(builtin_defs):
+            name = tool["function"]["name"]
+            if name in seen:
+                continue
+            seen.add(name)
+            result.append(tool)
         if self.search_skills and "web_search" not in seen:
             result.append(WEB_SEARCH_TOOL)
         return result

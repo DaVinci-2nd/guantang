@@ -329,7 +329,64 @@ body {
 
 .tool-status.running { background: rgba(230, 126, 34, 0.15); color: #e67e22; }
 
+.tool-status.pending { background: rgba(52, 152, 219, 0.15); color: #3498db; }
+
 .tool-status.done { background: rgba(39, 174, 96, 0.15); color: #27ae60; }
+
+.approval-box {
+  margin-top: 6px;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.approval-title { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: #e67e22; }
+
+.approval-op {
+  font-size: 12px;
+  color: var(--text);
+  background: var(--code-bg);
+  padding: 8px 10px;
+  border-radius: 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.approval-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+
+.approval-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.approval-btn:hover { background: var(--bg-hover); }
+
+.approval-btn.danger { border-color: var(--danger); color: var(--danger); }
+
+.approval-btn.danger:hover { background: var(--danger); color: #fff; }
+
+.approval-btn.allow {
+  background: #27ae60;
+  border-color: #27ae60;
+  color: #fff;
+  font-weight: 600;
+}
+
+.approval-btn.allow:hover { background: #2ecc71; border-color: #2ecc71; }
 
 .tool-args { font-size: 12px; color: var(--text-sub); margin-top: 4px; word-break: break-all; }
 
@@ -768,6 +825,8 @@ body {
 .field textarea { resize: vertical; line-height: 1.6; }
 
 .field-hint { font-style: normal; font-size: 11px; color: var(--text-sub); }
+
+.code-input { font-family: Consolas, "Courier New", monospace; font-size: 12px; line-height: 1.5; }
 
 .check-group { display: flex; flex-wrap: wrap; gap: 8px 16px; }
 

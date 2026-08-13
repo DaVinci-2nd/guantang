@@ -418,10 +418,19 @@
             const te = [...aiMsg.tool_events].reverse().find((t) => t.name === data.name && (t.result === '' || t.result === '执行中…'))
             if (te) te.result = '执行中…'
             scrollBottom()
+          } else if (data.type === 'approval') {
+            const tb = [...aiMsg.blocks].reverse().find((b) => b.type === 'tool' && b.name === data.name && b.status === 'running')
+            if (tb) {
+              tb.status = 'pending'
+              tb.approval_id = data.approval_id
+              tb.approval_text = data.operation
+              tb.approval_args = data.arguments
+            }
+            scrollBottom()
           } else if (data.type === 'tool_result') {
             const te = [...aiMsg.tool_events].reverse().find((t) => t.name === data.name && (t.result === '' || t.result === '执行中…'))
             if (te) te.result = data.text
-            const tb = [...aiMsg.blocks].reverse().find((b) => b.type === 'tool' && b.name === data.name && b.status === 'running')
+            const tb = [...aiMsg.blocks].reverse().find((b) => b.type === 'tool' && b.name === data.name && (b.status === 'running' || b.status === 'pending'))
             if (tb) {
               tb.status = 'done'
               tb.result = data.text
@@ -447,7 +456,7 @@
             aiMsg.tool_events = data.message.tool_events
             aiMsg.reasoning = data.message.reasoning
             aiMsg.content = data.message.content
-            aiMsg.interrupted = false
+            aiMsg.interrupted = !!data.interrupted
             if (data.message.blocks && data.message.blocks.length) {
               aiMsg.blocks = data.message.blocks
             }
@@ -464,6 +473,12 @@
           store.streaming = false
         }
         ws.onclose = () => {
+          aiMsg.blocks.forEach((b) => {
+            if (b.type === 'tool' && b.status === 'pending') {
+              b.status = 'done'
+              b.result = '（已中断）'
+            }
+          })
           if (aiMsg.streaming) {
             aiMsg.streaming = false
             aiMsg.interrupted = true
@@ -494,6 +509,16 @@
           aiMsg.interrupted = true
         }
         store.streaming = false
+      }
+
+      function onApprove(block, decision) {
+        const ws = activeWs
+        if (!ws || ws.readyState !== WebSocket.OPEN) return
+        if (block.approval_id) {
+          ws.send(JSON.stringify({ type: 'approval_response', approval_id: block.approval_id, decision }))
+        }
+        block.status = 'running'
+        block.approval_id = null
       }
 
       async function newSession() {
@@ -675,7 +700,7 @@
         currentRole, currentSession, newSession, deleteCurrentSession, formatTime,
         renderMarkdown, onModeChange, send, onFiles, toggleCentered, canSend,
         abortStream, regenerate, editTarget, editText, editBlocks, openEdit, closeEdit, saveEdit,
-        blockTypeName, moveBlock,
+        blockTypeName, moveBlock, onApprove,
         debugData, showDebug, debugJson, previewTarget, openPreview,
         onEditorKeydown, onEditorPaste, onEditorInput: markDirty,
         superData, superSend, addSuperRow, removeSuperRow, superRoleName, submitSuper, onSendClick,

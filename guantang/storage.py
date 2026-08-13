@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     title TEXT NOT NULL DEFAULT '',
     character_name TEXT NOT NULL DEFAULT '',
     mode TEXT NOT NULL DEFAULT '',
+    workdirs TEXT NOT NULL DEFAULT '[]',
     title_set INTEGER NOT NULL DEFAULT 0,
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL
@@ -53,6 +54,8 @@ class Storage:
             cols = [r["name"] for r in conn.execute("PRAGMA table_info(sessions)").fetchall()]
             if "title_set" not in cols:
                 conn.execute("ALTER TABLE sessions ADD COLUMN title_set INTEGER NOT NULL DEFAULT 0")
+            if "workdirs" not in cols:
+                conn.execute("ALTER TABLE sessions ADD COLUMN workdirs TEXT NOT NULL DEFAULT '[]'")
             mcols = [r["name"] for r in conn.execute("PRAGMA table_info(messages)").fetchall()]
             if "attachments" not in mcols:
                 conn.execute("ALTER TABLE messages ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'")
@@ -74,14 +77,29 @@ class Storage:
     def get_session(self, session_id: int) -> dict | None:
         with self._conn() as conn:
             row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
-            return dict(row) if row else None
+            if not row:
+                return None
+            session = dict(row)
+            try:
+                session["workdirs"] = json.loads(session["workdirs"])
+            except (json.JSONDecodeError, TypeError):
+                session["workdirs"] = []
+            return session
 
     def list_sessions(self) -> list[dict]:
         with self._conn() as conn:
             rows = conn.execute("SELECT * FROM sessions ORDER BY updated_at DESC").fetchall()
-            return [dict(r) for r in rows]
+            result = []
+            for r in rows:
+                s = dict(r)
+                try:
+                    s["workdirs"] = json.loads(s["workdirs"])
+                except (json.JSONDecodeError, TypeError):
+                    s["workdirs"] = []
+                result.append(s)
+            return result
 
-    def update_session(self, session_id: int, title=None, character_name=None, mode=None, title_set=None) -> dict | None:
+    def update_session(self, session_id: int, title=None, character_name=None, mode=None, title_set=None, workdirs=None) -> dict | None:
         fields = []
         values = []
         if title is not None:
@@ -96,6 +114,9 @@ class Storage:
         if title_set is not None:
             fields.append("title_set = ?")
             values.append(1 if title_set else 0)
+        if workdirs is not None:
+            fields.append("workdirs = ?")
+            values.append(json.dumps(workdirs, ensure_ascii=False))
         if fields:
             fields.append("updated_at = ?")
             values.append(_now())

@@ -7,6 +7,27 @@
       const playerName = ref(store.player.name === 'Untitled' ? '' : store.player.name)
       const playerAvatar = ref(store.player.avatar.startsWith('p-') ? '' : store.player.avatar)
       const playerAvatarFile = ref(null)
+      const builtinToolsText = ref('')
+
+      async function loadBuiltinTools() {
+        try {
+          const data = await api.get('/api/builtin-tools')
+          builtinToolsText.value = data.text || ''
+        } catch (e) {
+          builtinToolsText.value = ''
+        }
+      }
+
+      async function saveBuiltinTools() {
+        try {
+          await api.put('/api/builtin-tools', { text: builtinToolsText.value })
+          store.notify('已保存，内置工具配置立即生效', 'ok')
+        } catch (e) {
+          store.notify(e.message)
+        }
+      }
+
+      loadBuiltinTools()
 
       async function savePlayer() {
         try {
@@ -61,7 +82,7 @@
         }
       }
 
-      return { store, playerName, playerAvatar, playerAvatarFile, savePlayer, saveMultimodal, saveAutoTitle, uploadPlayerAvatar, onPlayerAvatarFile, applyTheme: store.applyTheme, saveUi: store.saveUi }
+      return { store, playerName, playerAvatar, playerAvatarFile, savePlayer, saveMultimodal, saveAutoTitle, uploadPlayerAvatar, onPlayerAvatarFile, builtinToolsText, saveBuiltinTools, applyTheme: store.applyTheme, saveUi: store.saveUi }
     },
   }
 

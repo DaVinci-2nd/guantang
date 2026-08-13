@@ -121,7 +121,7 @@
   const MessageBubble = {
     template: document.getElementById('tpl-message-bubble').innerHTML,
     props: ['msg', 'streaming'],
-    emits: ['regenerate', 'edit', 'preview'],
+    emits: ['regenerate', 'edit', 'preview', 'approve'],
     setup() {
       return { store }
     },

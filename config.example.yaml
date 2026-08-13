@@ -30,4 +30,5 @@ auto_title:
 system_prompt_file: prompts/system.md
 rules_file: prompts/rules.md
 translator_file: prompts/translator.md
+builtin_tools_file: prompts/builtin_tools.yaml
 zh_cache_file: data/zh_cache.json
