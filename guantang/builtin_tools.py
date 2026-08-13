@@ -419,6 +419,7 @@ def parse_tools(text: str) -> list[dict]:
             raise ValueError(f"工具 {key} 的 parameters 格式错误")
         name = str(item.get("name") or key).strip() or key
         tool = {
+            "key": key,
             "name": name,
             "description": desc,
             "parameters": params,
@@ -427,6 +428,44 @@ def parse_tools(text: str) -> list[dict]:
         }
         result.append(tool)
     return result
+
+
+def tools_to_yaml(tools: list[dict]) -> str:
+    data = {}
+    for t in tools:
+        key = str(t.get("key") or "").strip()
+        if not key:
+            raise ValueError("工具缺少 key")
+        name = str(t.get("name") or key).strip() or key
+        desc = str(t.get("description") or "").strip()
+        if not desc:
+            raise ValueError(f"工具 {key} 缺少用途说明")
+        params = t.get("parameters") or []
+        if not isinstance(params, list):
+            raise ValueError(f"工具 {key} 的参数格式错误")
+        properties = {}
+        required = []
+        for p in params:
+            pname = str(p.get("name") or "").strip()
+            if not pname:
+                raise ValueError(f"工具 {key} 存在未命名的参数")
+            properties[pname] = {
+                "type": str(p.get("type") or "string"),
+                "description": str(p.get("description") or ""),
+            }
+            if p.get("required"):
+                required.append(pname)
+        item = {
+            "approval": bool(t.get("approval", False)),
+            "description": desc,
+            "parameters": properties,
+        }
+        if required:
+            item["required"] = required
+        if name != key:
+            item["name"] = name
+        data[key] = item
+    return yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
 
 
 def to_openai_tools(defs: list[dict]) -> list[dict]:

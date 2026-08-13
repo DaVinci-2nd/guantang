@@ -337,11 +337,17 @@ body {
   margin-top: 6px;
   padding: 10px 12px;
   background: var(--panel);
-  border: 1px solid var(--border);
+  border: 1.5px solid #e67e22;
   border-radius: 8px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  animation: approval-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes approval-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(230, 126, 34, 0.25); }
+  50% { box-shadow: 0 0 0 4px rgba(230, 126, 34, 0.12); }
 }
 
 .approval-title { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: #e67e22; }
@@ -826,7 +832,23 @@ body {
 
 .field-hint { font-style: normal; font-size: 11px; color: var(--text-sub); }
 
-.code-input { font-family: Consolas, "Courier New", monospace; font-size: 12px; line-height: 1.5; }
+.builtin-tools-title { display: flex; flex-direction: column; gap: 4px; }
+
+.param-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
+.param-row > input:first-child { width: 120px; }
+
+.param-row > select { width: 100px; }
+
+.param-row > input:nth-child(3) { flex: 1; min-width: 140px; }
+
+.param-required { flex-shrink: 0; }
 
 .check-group { display: flex; flex-wrap: wrap; gap: 8px 16px; }
 

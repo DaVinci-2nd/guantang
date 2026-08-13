@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .builtin_tools import parse_tools
+from .builtin_tools import parse_tools, tools_to_yaml
 from .config import Config
 from .engine import ApprovalStopped, Engine
 from .mcp_client import MCPManager
@@ -731,9 +731,17 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     class BuiltinToolsPayload(BaseModel):
         text: str
 
+    class BuiltinToolsFormPayload(BaseModel):
+        tools: list[dict]
+
     @app.get("/api/builtin-tools")
     async def get_builtin_tools():
-        return {"text": ctx.builtin_tools_text()}
+        text = ctx.builtin_tools_text()
+        try:
+            tools = parse_tools(text)
+        except Exception:
+            tools = []
+        return {"text": text, "tools": tools}
 
     @app.put("/api/builtin-tools")
     async def save_builtin_tools(payload: BuiltinToolsPayload):
@@ -747,6 +755,20 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(payload.text, encoding="utf-8")
         return {"text": payload.text, "tools": [t["name"] for t in defs]}
+
+    @app.put("/api/builtin-tools/form")
+    async def save_builtin_tools_form(payload: BuiltinToolsFormPayload):
+        try:
+            text = tools_to_yaml(payload.tools)
+            defs = parse_tools(text)
+        except Exception as e:
+            raise HTTPException(400, f"工具配置格式错误：{e}")
+        if not defs:
+            raise HTTPException(400, "工具配置不能为空")
+        path = ctx.builtin_tools_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return {"text": text, "tools": defs}
 
     @app.post("/api/player/avatar")
     async def upload_player_avatar(file: UploadFile):

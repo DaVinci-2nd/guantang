@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>灌汤</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23444444' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z'/%3E%3Cpath d='M9 11h6'/%3E%3Cpath d='M9 15h4'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/style.css?v=20260822">
+<link rel="stylesheet" href="/static/style.css?v=20260823">
 </head>
 <body>
 <div id="app"></div>
@@ -437,11 +437,37 @@
         <button class="primary-btn" @click="saveMultimodal"><icon name="check"></icon><span>保存</span></button>
       </div>
     </div>
-    <div class="field card">
+    <div class="builtin-tools-title">
       <span class="rules-title">内置工具提示词</span>
-      <em class="field-hint">定义内置工具的调用词、用途说明与参数说明，可自行修改；保存后立即生效，无需重启。调用词建议使用英文小写字母与下划线</em>
-      <div class="field"><span>工具定义（YAML，加载中…）</span>
-        <textarea v-model="builtinToolsText" rows="20" class="code-input" placeholder="加载中…"></textarea>
+      <em class="field-hint">每个工具单独编辑调用词、用途说明、参数说明与是否审批，保存后立即生效。调用词建议使用英文小写字母与下划线</em>
+    </div>
+    <div class="field card" v-for="t in builtinTools" :key="t.key">
+      <span class="rules-title">{{ t.key }}</span>
+      <label class="field"><span>调用词</span>
+        <input v-model="t.name" placeholder="英文小写字母与下划线"/>
+      </label>
+      <label class="field"><span>需要审批</span>
+        <select v-model="t.approval">
+          <option :value="true">需要</option>
+          <option :value="false">不需要</option>
+        </select>
+      </label>
+      <div class="field"><span>用途说明</span>
+        <textarea v-model="t.description" rows="2"></textarea>
+      </div>
+      <div class="field"><span>参数说明</span>
+        <div v-for="(p, i) in t.parameters" :key="i" class="param-row">
+          <input v-model="p.name" placeholder="参数名"/>
+          <select v-model="p.type">
+            <option value="string">string</option>
+            <option value="integer">integer</option>
+            <option value="boolean">boolean</option>
+          </select>
+          <input v-model="p.description" placeholder="参数说明"/>
+          <label class="check-item param-required"><input type="checkbox" v-model="p.required"/><span>必填</span></label>
+          <button class="icon-btn small" title="删除参数" @click="removeParam(t, i)"><icon name="x"></icon></button>
+        </div>
+        <button class="ghost-btn" @click="addParam(t)"><icon name="plus"></icon><span>添加参数</span></button>
       </div>
       <div class="modal-actions">
         <button class="primary-btn" @click="saveBuiltinTools"><icon name="check"></icon><span>保存</span></button>
@@ -777,16 +803,16 @@
 <script src="https://unpkg.com/vue@3.4.38/dist/vue.global.prod.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
 <script src="https://unpkg.com/@highlightjs/cdn-assets@11.11.1/highlight.min.js"></script>
-<script src="/static/icons.js?v=20260822"></script>
-<script src="/static/api.js?v=20260822"></script>
-<script src="/static/store.js?v=20260822"></script>
-<script src="/static/views/common.js?v=20260822"></script>
-<script src="/static/views/chat.js?v=20260822"></script>
-<script src="/static/views/roles.js?v=20260822"></script>
-<script src="/static/views/skills.js?v=20260822"></script>
-<script src="/static/views/modes.js?v=20260822"></script>
-<script src="/static/views/models.js?v=20260822"></script>
-<script src="/static/views/settings.js?v=20260822"></script>
-<script src="/static/app.js?v=20260822"></script>
+<script src="/static/icons.js?v=20260823"></script>
+<script src="/static/api.js?v=20260823"></script>
+<script src="/static/store.js?v=20260823"></script>
+<script src="/static/views/common.js?v=20260823"></script>
+<script src="/static/views/chat.js?v=20260823"></script>
+<script src="/static/views/roles.js?v=20260823"></script>
+<script src="/static/views/skills.js?v=20260823"></script>
+<script src="/static/views/modes.js?v=20260823"></script>
+<script src="/static/views/models.js?v=20260823"></script>
+<script src="/static/views/settings.js?v=20260823"></script>
+<script src="/static/app.js?v=20260823"></script>
 </body>
 </html>

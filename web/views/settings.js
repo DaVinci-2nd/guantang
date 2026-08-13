@@ -7,20 +7,52 @@
       const playerName = ref(store.player.name === 'Untitled' ? '' : store.player.name)
       const playerAvatar = ref(store.player.avatar.startsWith('p-') ? '' : store.player.avatar)
       const playerAvatarFile = ref(null)
-      const builtinToolsText = ref('')
+      const builtinTools = ref([])
 
       async function loadBuiltinTools() {
         try {
           const data = await api.get('/api/builtin-tools')
-          builtinToolsText.value = data.text || ''
+          builtinTools.value = (data.tools || []).map((t) => ({
+            key: t.key,
+            name: t.name,
+            approval: !!t.approval,
+            description: t.description || '',
+            parameters: Object.entries(t.parameters || {}).map(([n, p]) => ({
+              name: n,
+              type: (p && p.type) || 'string',
+              description: (p && p.description) || '',
+              required: (t.required || []).includes(n),
+            })),
+          }))
         } catch (e) {
-          builtinToolsText.value = ''
+          builtinTools.value = []
         }
       }
 
+      function addParam(tool) {
+        tool.parameters.push({ name: '', type: 'string', description: '', required: false })
+      }
+
+      function removeParam(tool, index) {
+        tool.parameters.splice(index, 1)
+      }
+
       async function saveBuiltinTools() {
+        const tools = builtinTools.value.map((t) => ({
+          key: t.key,
+          name: t.name.trim(),
+          approval: !!t.approval,
+          description: t.description,
+          parameters: t.parameters.map((p) => ({
+            name: p.name.trim(),
+            type: p.type,
+            description: p.description,
+            required: !!p.required,
+          })),
+        }))
         try {
-          await api.put('/api/builtin-tools', { text: builtinToolsText.value })
+          await api.put('/api/builtin-tools/form', { tools })
+          await loadBuiltinTools()
           store.notify('已保存，内置工具配置立即生效', 'ok')
         } catch (e) {
           store.notify(e.message)
@@ -82,7 +114,7 @@
         }
       }
 
-      return { store, playerName, playerAvatar, playerAvatarFile, savePlayer, saveMultimodal, saveAutoTitle, uploadPlayerAvatar, onPlayerAvatarFile, builtinToolsText, saveBuiltinTools, applyTheme: store.applyTheme, saveUi: store.saveUi }
+      return { store, playerName, playerAvatar, playerAvatarFile, savePlayer, saveMultimodal, saveAutoTitle, uploadPlayerAvatar, onPlayerAvatarFile, builtinTools, addParam, removeParam, saveBuiltinTools, applyTheme: store.applyTheme, saveUi: store.saveUi }
     },
   }
 
