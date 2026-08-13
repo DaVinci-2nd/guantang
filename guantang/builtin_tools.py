@@ -1,3 +1,4 @@
+import difflib
 import fnmatch
 import os
 import re
@@ -97,6 +98,35 @@ async def describe_operation(name: str, args: dict, tool_def=None) -> str:
     if tool_def:
         return f"{tool_def.get('description') or name}，参数：{args}"
     return f"调用工具：{name}，参数：{args}"
+
+
+def build_edit_diff(args: dict, workdirs: list) -> dict | None:
+    path_arg = str(args.get("path") or "").strip()
+    old_text = str(args.get("old_text") or "")
+    new_text = str(args.get("new_text") or "")
+    if not path_arg:
+        return None
+    p, err = resolve_path(path_arg, workdirs)
+    if err:
+        return None
+    if not p.is_file():
+        return None
+    try:
+        before = p.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    if old_text:
+        after = before.replace(old_text, new_text)
+    else:
+        after = before + new_text
+    lines = []
+    for line in difflib.ndiff(before.splitlines(), after.splitlines()):
+        if line.startswith("? "):
+            continue
+        prefix = line[0] if line else " "
+        content = line[2:] if len(line) > 2 else ""
+        lines.append([prefix, content])
+    return {"path": str(p), "lines": lines}
 
 
 def _fmt_bytes(n: int) -> str:

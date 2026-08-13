@@ -364,6 +364,31 @@ body {
   overflow-y: auto;
 }
 
+.approval-diff { display: flex; flex-direction: column; gap: 4px; }
+
+.approval-diff-title { font-size: 11px; font-weight: 600; color: var(--text-sub); }
+
+.approval-diff-scroll {
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--code-bg);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.diff-line { display: flex; gap: 6px; white-space: pre-wrap; word-break: break-word; }
+
+.diff-mark { flex-shrink: 0; width: 12px; text-align: center; user-select: none; opacity: 0.7; }
+
+.diff-text { flex: 1; }
+
+.diff-line.del { background: rgba(231, 76, 60, 0.16); color: #e74c3c; }
+
+.diff-line.add { background: rgba(39, 174, 96, 0.16); color: #27ae60; }
+
 .approval-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 
 .approval-btn {

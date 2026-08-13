@@ -425,6 +425,7 @@
               tb.approval_id = data.approval_id
               tb.approval_text = data.operation
               tb.approval_args = data.arguments
+              tb.approval_diff = data.diff || null
             }
             scrollBottom()
           } else if (data.type === 'tool_result') {

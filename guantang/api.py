@@ -845,17 +845,18 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 search_defs = ctx.resolve_search_skills(role)
                 await ctx.ensure(model_def, skill_defs, search_defs)
 
-                async def approval_handler(name: str, arguments: dict, operation: str) -> str:
+                async def approval_handler(name: str, arguments: dict, operation: str, diff=None) -> str:
                     approval_id = f"ap_{uuid.uuid4().hex[:10]}"
-                    await ws.send_json(
-                        {
-                            "type": "approval",
-                            "approval_id": approval_id,
-                            "name": name,
-                            "arguments": arguments,
-                            "operation": operation,
-                        }
-                    )
+                    payload = {
+                        "type": "approval",
+                        "approval_id": approval_id,
+                        "name": name,
+                        "arguments": arguments,
+                        "operation": operation,
+                    }
+                    if diff:
+                        payload["diff"] = diff
+                    await ws.send_json(payload)
                     while True:
                         resp = await ws.receive_json()
                         if resp.get("type") != "approval_response" or resp.get("approval_id") != approval_id:
