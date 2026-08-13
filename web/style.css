@@ -144,9 +144,11 @@ body {
 
 .session-item:hover { background: var(--bg-hover); }
 
-.session-item.active { background: var(--bg-hover); }
+.session-item.active { background: var(--bg-hover); align-items: flex-start; }
 
 .session-title { flex: 1; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.session-item.active .session-title { white-space: normal; word-break: break-word; overflow: visible; }
 
 .session-meta { font-size: 11px; color: var(--text-sub); max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -275,6 +277,8 @@ body {
   border: 1px solid var(--border);
   line-height: 1.7;
   word-break: break-word;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .msg.player .msg-content { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }

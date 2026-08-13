@@ -144,17 +144,20 @@
           markDirty()
         })
         const sel = window.getSelection()
+        const zwsp = document.createTextNode('\u200b')
         if (sel && sel.rangeCount) {
           const range = sel.getRangeAt(0)
           range.collapse(false)
           range.insertNode(span)
+          range.insertNode(zwsp)
           const after = document.createRange()
-          after.setStartAfter(span)
+          after.setStartAfter(zwsp)
           after.collapse(true)
           sel.removeAllRanges()
           sel.addRange(after)
         } else {
           el.appendChild(span)
+          el.appendChild(zwsp)
         }
         markDirty()
       }
@@ -217,7 +220,7 @@
         function walk(node) {
           node.childNodes.forEach((child) => {
             if (child.nodeType === Node.TEXT_NODE) {
-              text += child.textContent
+              text += child.textContent.replace(/\u200b/g, '')
             } else if (child.nodeType === Node.ELEMENT_NODE) {
               if (child.classList && child.classList.contains('attach-inline')) {
                 const item = editingAtts.value.find((a) => a.id === Number(child.dataset.aid))
@@ -643,7 +646,7 @@
       }
 
       function renderMarkdown(text) {
-        try { return marked.parse(text || '') } catch (e) { return text || '' }
+        try { return marked.parse(text || '', { breaks: true }) } catch (e) { return text || '' }
       }
 
       async function onModeChange(e) {

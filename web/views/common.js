@@ -92,7 +92,7 @@
         return `${d.getMonth() + 1}-${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`
       },
       renderMarkdown(text) {
-        try { return marked.parse(text || '') } catch (e) { return text || '' }
+        try { return marked.parse(text || '', { breaks: true }) } catch (e) { return text || '' }
       },
       prettyArgs(args) {
         if (!args) return ''
