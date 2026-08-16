@@ -34,7 +34,7 @@
       }
       return marked.parse(text || '', { gfm: true, breaks: true, renderer }).replace(/\s+$/, '')
     } catch (e) {
-      return text || ''
+      return escapeHtml(text || '').replace(/\n/g, '<br>')
     }
   }
 
