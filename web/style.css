@@ -249,7 +249,6 @@ body {
   min-width: 0;
 }
 
-.chat-head-actions { display: flex; align-items: center; gap: 4px; }
 
 .chat-role { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
 
