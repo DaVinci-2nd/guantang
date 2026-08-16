@@ -1,9 +1,11 @@
+import asyncio
 import difflib
 import fnmatch
 import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import yaml
@@ -492,7 +494,51 @@ def _has_cd_escape(command: str, workdirs: list, cwd: Path) -> bool:
     return False
 
 
-async def execute_run_command(args, workdirs):
+async def _kill_process_tree(proc):
+    if proc.returncode is not None:
+        return
+    if os.name == "nt":
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                capture_output=True,
+                timeout=5,
+            )
+        except Exception:
+            pass
+    try:
+        proc.kill()
+    except (ProcessLookupError, OSError):
+        pass
+
+
+async def _wait_command(proc, check_cancel, timeout=COMMAND_TIMEOUT):
+    task = asyncio.ensure_future(proc.communicate())
+    start = time.monotonic()
+    try:
+        while True:
+            try:
+                stdout, stderr = await asyncio.wait_for(asyncio.shield(task), timeout=1)
+                return stdout, stderr, None
+            except asyncio.TimeoutError:
+                if time.monotonic() - start >= timeout:
+                    await _kill_process_tree(proc)
+                    task.cancel()
+                    return None, None, "超时"
+                if check_cancel is not None:
+                    cancelled = await check_cancel()
+                    if cancelled:
+                        await _kill_process_tree(proc)
+                        task.cancel()
+                        return None, None, "中断"
+                continue
+    except asyncio.CancelledError:
+        await _kill_process_tree(proc)
+        task.cancel()
+        raise
+
+
+async def execute_run_command(args, workdirs, check_cancel=None):
     command = str(args.get("command") or "").strip()
     if not command:
         return "执行失败：命令不能为空"
@@ -510,21 +556,24 @@ async def execute_run_command(args, workdirs):
     if _has_cd_escape(command, workdirs, cwd):
         return "执行失败：命令试图切换到工作目录之外，已阻止"
     try:
-        proc = subprocess.run(
+        proc = await asyncio.create_subprocess_shell(
             command,
-            shell=True,
             cwd=str(cwd),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=COMMAND_TIMEOUT,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
-    except subprocess.TimeoutExpired:
-        return f"命令执行超时：{COMMAND_TIMEOUT} 秒"
     except OSError as e:
         return f"执行失败：{e}"
-    out = (proc.stdout or "") + (proc.stderr or "")
+    try:
+        stdout, stderr, reason = await _wait_command(proc, check_cancel)
+    except asyncio.CancelledError:
+        await _kill_process_tree(proc)
+        raise
+    if reason == "超时":
+        return f"命令执行超时：{COMMAND_TIMEOUT} 秒"
+    if reason == "中断":
+        return "命令执行已中断"
+    out = (stdout or b"").decode("utf-8", errors="replace") + (stderr or b"").decode("utf-8", errors="replace")
     if len(out) > MAX_COMMAND_OUTPUT:
         out = out[:MAX_COMMAND_OUTPUT] + f"\n……输出过长，已截取前 {MAX_COMMAND_OUTPUT} 字符"
     head = f"执行目录：{cwd}\n命令：{command}\n退出码：{proc.returncode}"
@@ -548,11 +597,13 @@ EXECUTORS = {
 }
 
 
-async def execute_builtin(name: str, args: dict, workdirs: list) -> str:
+async def execute_builtin(name: str, args: dict, workdirs: list, check_cancel=None) -> str:
     func = EXECUTORS.get(name)
     if func is None:
         return f"错误：未知内置工具 {name}"
     try:
+        if name == "run_command":
+            return await func(args, workdirs, check_cancel)
         return await func(args, workdirs)
     except Exception as e:
         return f"工具执行出错：{e}"

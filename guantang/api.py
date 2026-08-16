@@ -900,6 +900,17 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                     mode = ctx.modes.get(session["mode"])
                     if mode:
                         ctx.engine.replace_rules = mode.get("replace_rules") or []
+
+                async def check_cancel() -> bool:
+                    try:
+                        msg = await asyncio.wait_for(ws.receive_json(), timeout=1)
+                    except asyncio.TimeoutError:
+                        return False
+                    except WebSocketDisconnect:
+                        return True
+                    return msg.get("type") == "abort"
+
+                ctx.engine.check_cancel = check_cancel
                 set_context(session_id=session_id, role=role["name"], model=model_def.get("model", ""), purpose="chat")
                 system = ctx.build_system(session, role, model_def)
                 thinking = build_thinking(

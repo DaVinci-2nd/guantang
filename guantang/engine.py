@@ -53,6 +53,7 @@ class Engine:
         self.approval_handler = approval_handler
         self.approval_reject_text = ""
         self.replace_rules = []
+        self.check_cancel = None
         self.workdirs = workdirs if workdirs is not None else []
 
     async def run(self, system_prompt: str, player_message: str, history: list[dict] | None = None, thinking=None):
@@ -151,7 +152,7 @@ class Engine:
                 return template.format(operation=operation)
             if decision == "reject_stop":
                 raise ApprovalStopped(name, arguments)
-        return await execute_builtin(name, arguments, self.workdirs)
+        return await execute_builtin(name, arguments, self.workdirs, self.check_cancel)
 
     def _load_builtin_defs(self) -> list[dict]:
         if not self.builtin_loader:

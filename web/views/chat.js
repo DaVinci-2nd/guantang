@@ -526,6 +526,11 @@
       function abortStream() {
         if (!store.streaming || !store.activeWs) return
         const aiMsg = store.activeAiMsg
+        try {
+          if (store.activeWs.readyState === WebSocket.OPEN) {
+            store.activeWs.send(JSON.stringify({ type: 'abort' }))
+          }
+        } catch (e) { /* 忽略 */ }
         store.activeWs.close()
         if (aiMsg) {
           aiMsg.streaming = false
