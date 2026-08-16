@@ -946,14 +946,20 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                     async for event in ctx.engine.run_messages(system, history, thinking=thinking):
                         kind = event[0]
                         if kind == "reasoning":
+                            back = event[2] if len(event) > 2 else 0
+                            if back > 0:
+                                reasoning = reasoning[:-back]
+                                reasoning_buf = reasoning_buf[:-back]
                             reasoning += event[1]
                             reasoning_buf += event[1]
-                            back = event[2] if len(event) > 2 else 0
                             await ws.send_json({"type": "reasoning", "delta": event[1], "backspace": back})
                         elif kind == "text":
+                            back = event[2] if len(event) > 2 else 0
+                            if back > 0:
+                                reply = reply[:-back]
+                                text_buf = text_buf[:-back]
                             reply += event[1]
                             text_buf += event[1]
-                            back = event[2] if len(event) > 2 else 0
                             await ws.send_json({"type": "text", "delta": event[1], "backspace": back})
                         elif kind == "tool_call":
                             await ws.send_json(

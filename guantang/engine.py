@@ -70,7 +70,7 @@ class Engine:
             replacer = StreamReplacer(self.replace_rules)
 
             tool_calls: list[ToolCall] = []
-            reply_chunks = []
+            reply_buf = ""
             async for event in self.provider.stream_chat(
                 messages,
                 tools=openai_tools,
@@ -81,7 +81,9 @@ class Engine:
                 if event[0] in ("reasoning", "text"):
                     delta, back = replacer.feed(event[1])
                     if event[0] == "text":
-                        reply_chunks.append(delta)
+                        if back > 0:
+                            reply_buf = reply_buf[:-back]
+                        reply_buf += delta
                     yield (event[0], delta, back)
                 elif event[0] == "tool_call":
                     tool_calls.append(event[1])
@@ -90,12 +92,12 @@ class Engine:
                     yield event
 
             if not tool_calls:
-                reply = "".join(reply_chunks)
+                reply = reply_buf
                 if reply:
                     messages.append({"role": "assistant", "content": reply})
                 break
 
-            messages.append(self._assistant_tool_message(tool_calls))
+            messages.append(self._assistant_tool_message(tool_calls, reply_buf or None))
             for tc in tool_calls:
                 yield ("tool_exec", tc.name, tc.arguments)
                 if tc.name == "web_search":
@@ -170,10 +172,10 @@ class Engine:
         return result
 
     @staticmethod
-    def _assistant_tool_message(tool_calls: list[ToolCall]) -> dict:
+    def _assistant_tool_message(tool_calls: list[ToolCall], content: str | None = None) -> dict:
         return {
             "role": "assistant",
-            "content": None,
+            "content": content,
             "tool_calls": [
                 {
                     "id": tc.id,
