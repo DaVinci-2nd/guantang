@@ -424,11 +424,11 @@
             aiMsg.tool_events.push({ name: data.name, arguments: data.arguments, result: '' })
             aiMsg.blocks.push({ type: 'tool', name: data.name, arguments: data.arguments, status: 'running', result: '', open: false })
           } else if (data.type === 'tool_exec') {
-            const te = [...aiMsg.tool_events].reverse().find((t) => t.name === data.name && (t.result === '' || t.result === '执行中…'))
+            const te = aiMsg.tool_events.find((t) => t.name === data.name && (t.result === '' || t.result === '执行中…'))
             if (te) te.result = '执行中…'
             scrollBottom()
           } else if (data.type === 'approval') {
-            const tb = [...aiMsg.blocks].reverse().find((b) => b.type === 'tool' && b.name === data.name && b.status === 'running')
+            const tb = aiMsg.blocks.find((b) => b.type === 'tool' && b.name === data.name && b.status === 'running')
             if (tb) {
               tb.status = 'pending'
               tb.approval_id = data.approval_id
@@ -451,9 +451,9 @@
               })
             }
           } else if (data.type === 'tool_result') {
-            const te = [...aiMsg.tool_events].reverse().find((t) => t.name === data.name && (t.result === '' || t.result === '执行中…'))
+            const te = aiMsg.tool_events.find((t) => t.name === data.name && (t.result === '' || t.result === '执行中…'))
             if (te) te.result = data.text
-            const tb = [...aiMsg.blocks].reverse().find((b) => b.type === 'tool' && b.name === data.name && (b.status === 'running' || b.status === 'pending'))
+            const tb = aiMsg.blocks.find((b) => b.type === 'tool' && b.name === data.name && (b.status === 'running' || b.status === 'pending'))
             if (tb) {
               tb.status = 'done'
               tb.result = data.text

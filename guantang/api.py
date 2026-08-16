@@ -997,11 +997,11 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                             tool_events.append({"name": event[1], "arguments": event[2], "result": ""})
                             blocks.append({"type": "tool", "name": event[1], "arguments": event[2], "result": ""})
                         elif kind == "tool_result":
-                            for te in reversed(tool_events):
+                            for te in tool_events:
                                 if te["name"] == event[1] and not te.get("result"):
                                     te["result"] = event[2]
                                     break
-                            for blk in reversed(blocks):
+                            for blk in blocks:
                                 if blk["type"] == "tool" and blk["name"] == event[1] and not blk.get("result"):
                                     blk["result"] = event[2]
                                     break
@@ -1020,11 +1020,11 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                         blocks.append({"type": "reasoning", "text": reasoning_buf})
                     if text_buf:
                         blocks.append({"type": "text", "text": text_buf})
-                    for te in reversed(tool_events):
+                    for te in tool_events:
                         if te["name"] == e.name and not te.get("result"):
                             te["result"] = REJECT_STOP_TEXT
                             break
-                    for blk in reversed(blocks):
+                    for blk in blocks:
                         if blk["type"] == "tool" and blk["name"] == e.name and not blk.get("result"):
                             blk["result"] = REJECT_STOP_TEXT
                             break
