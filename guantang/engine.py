@@ -71,6 +71,7 @@ class Engine:
 
             tool_calls: list[ToolCall] = []
             reply_buf = ""
+            reasoning_buf = ""
             async for event in self.provider.stream_chat(
                 messages,
                 tools=openai_tools,
@@ -84,6 +85,10 @@ class Engine:
                         if back > 0:
                             reply_buf = reply_buf[:-back]
                         reply_buf += delta
+                    else:
+                        if back > 0:
+                            reasoning_buf = reasoning_buf[:-back]
+                        reasoning_buf += delta
                     yield (event[0], delta, back)
                 elif event[0] == "tool_call":
                     tool_calls.append(event[1])
@@ -93,11 +98,14 @@ class Engine:
 
             if not tool_calls:
                 reply = reply_buf
-                if reply:
-                    messages.append({"role": "assistant", "content": reply})
+                if reply or reasoning_buf:
+                    assistant = {"role": "assistant", "content": reply or None}
+                    if reasoning_buf:
+                        assistant["reasoning_content"] = reasoning_buf
+                    messages.append(assistant)
                 break
 
-            messages.append(self._assistant_tool_message(tool_calls, reply_buf or None))
+            messages.append(self._assistant_tool_message(tool_calls, reply_buf or None, reasoning_buf or None))
             for tc in tool_calls:
                 yield ("tool_exec", tc.name, tc.arguments)
                 if tc.name == "web_search":
@@ -172,8 +180,8 @@ class Engine:
         return result
 
     @staticmethod
-    def _assistant_tool_message(tool_calls: list[ToolCall], content: str | None = None) -> dict:
-        return {
+    def _assistant_tool_message(tool_calls: list[ToolCall], content: str | None = None, reasoning_content: str | None = None) -> dict:
+        msg = {
             "role": "assistant",
             "content": content,
             "tool_calls": [
@@ -188,3 +196,6 @@ class Engine:
                 for tc in tool_calls
             ],
         }
+        if reasoning_content:
+            msg["reasoning_content"] = reasoning_content
+        return msg

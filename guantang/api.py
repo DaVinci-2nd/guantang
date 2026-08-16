@@ -240,7 +240,10 @@ class AppContext:
             if m["sender"] == "player":
                 result.append({"role": "user", "content": self.build_message_content(m)})
             else:
-                result.append({"role": "assistant", "content": m["content"]})
+                msg = {"role": "assistant", "content": m["content"]}
+                if m.get("reasoning"):
+                    msg["reasoning_content"] = m["reasoning"]
+                result.append(msg)
         return result
 
     async def recognize_message_images(self, msg: dict) -> str | None:
