@@ -4,6 +4,7 @@ from .builtin_tools import DEFAULT_APPROVAL_REJECT_TEXT, build_approval_diff, de
 from .mcp_client import MCPManager
 from .providers.base import ToolCall
 from .search import search
+from .stream_replace import StreamReplacer
 from .zh_translator import ZhTranslator
 
 WEB_SEARCH_TOOL = {
@@ -51,6 +52,7 @@ class Engine:
         self.builtin_loader = builtin_loader
         self.approval_handler = approval_handler
         self.approval_reject_text = ""
+        self.replace_rules = []
         self.workdirs = workdirs if workdirs is not None else []
 
     async def run(self, system_prompt: str, player_message: str, history: list[dict] | None = None, thinking=None):
@@ -65,6 +67,7 @@ class Engine:
         while True:
             builtin_defs = self._load_builtin_defs()
             openai_tools = await self._build_openai_tools(builtin_defs)
+            replacer = StreamReplacer(self.replace_rules)
 
             tool_calls: list[ToolCall] = []
             reply_chunks = []
@@ -76,9 +79,10 @@ class Engine:
                 thinking=thinking,
             ):
                 if event[0] in ("reasoning", "text"):
+                    delta, back = replacer.feed(event[1])
                     if event[0] == "text":
-                        reply_chunks.append(event[1])
-                    yield event
+                        reply_chunks.append(delta)
+                    yield (event[0], delta, back)
                 elif event[0] == "tool_call":
                     tool_calls.append(event[1])
                     yield event

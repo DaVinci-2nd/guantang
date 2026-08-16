@@ -7,7 +7,17 @@
       const editor = ref(null)
 
       function openEditor(mode) {
-        editor.value = mode ? { ...mode, _orig: mode.name } : { name: '', description: '', content: '' }
+        editor.value = mode
+          ? { ...mode, replace_rules: (mode.replace_rules || []).map((r) => ({ ...r })), _orig: mode.name }
+          : { name: '', description: '', content: '', replace_rules: [] }
+      }
+
+      function addReplaceRule() {
+        if (editor.value) editor.value.replace_rules.push({ pattern: '', replacement: '' })
+      }
+
+      function removeReplaceRule(index) {
+        if (editor.value) editor.value.replace_rules.splice(index, 1)
       }
 
       async function saveMode() {
@@ -32,7 +42,7 @@
         await store.loadState()
       }
 
-      return { store, editor, openEditor, saveMode, removeMode }
+      return { store, editor, openEditor, saveMode, removeMode, addReplaceRule, removeReplaceRule }
     },
   }
 

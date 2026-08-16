@@ -390,12 +390,24 @@
         ws.onmessage = (ev) => {
           const data = JSON.parse(ev.data)
           if (data.type === 'reasoning') {
+            const back = data.backspace || 0
+            if (back > 0) {
+              aiMsg.reasoning = aiMsg.reasoning.slice(0, -back)
+              const lb = aiMsg.blocks[aiMsg.blocks.length - 1]
+              if (lb && lb.type === 'reasoning') lb.text = lb.text.slice(0, -back)
+            }
             aiMsg.reasoning += data.delta
             const last = aiMsg.blocks[aiMsg.blocks.length - 1]
             if (last && last.type === 'reasoning') last.text += data.delta
             else aiMsg.blocks.push({ type: 'reasoning', text: data.delta, open: false })
             scrollBottom()
           } else if (data.type === 'text') {
+            const back = data.backspace || 0
+            if (back > 0) {
+              aiMsg.content = aiMsg.content.slice(0, -back)
+              const lb = aiMsg.blocks[aiMsg.blocks.length - 1]
+              if (lb && lb.type === 'text') lb.text = lb.text.slice(0, -back)
+            }
             aiMsg.content += data.delta
             const last = aiMsg.blocks[aiMsg.blocks.length - 1]
             if (last && last.type === 'text') last.text += data.delta

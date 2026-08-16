@@ -34,6 +34,8 @@ class ModeStore:
         folder = self.dir / name
         folder.mkdir(parents=True, exist_ok=True)
         meta = {"name": name, "description": data.get("description", "")}
+        if data.get("replace_rules"):
+            meta["replace_rules"] = data["replace_rules"]
         (folder / "mode.yaml").write_text(yaml.safe_dump(meta, allow_unicode=True, sort_keys=False), encoding="utf-8")
         (folder / "mode.md").write_text(data.get("content", ""), encoding="utf-8")
         return self.get(name)

@@ -31,6 +31,19 @@ from .zh_translator import ZhTranslator
 REJECT_STOP_TEXT = "此操作已被手动拒绝，对话已中断。"
 
 
+def validate_replace_rules(rules: list[dict]):
+    import re
+
+    for i, rule in enumerate(rules):
+        pattern = str(rule.get("pattern") or "").strip()
+        if not pattern:
+            raise HTTPException(400, f"替换规则 {i + 1} 缺少匹配词")
+        try:
+            re.compile(pattern)
+        except re.error as e:
+            raise HTTPException(400, f"替换规则 {i + 1} 的正则无效：{e}")
+
+
 class RolePayload(BaseModel):
     name: str
     avatar: str = ""
@@ -62,6 +75,7 @@ class ModePayload(BaseModel):
     name: str
     description: str = ""
     content: str = ""
+    replace_rules: list[dict] = Field(default_factory=list)
 
 
 class ModelPayload(BaseModel):
@@ -537,13 +551,16 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     @app.post("/api/modes")
     async def upsert_mode(payload: ModePayload):
-        return ctx.modes.upsert(payload.model_dump())
+        data = payload.model_dump()
+        validate_replace_rules(data.get("replace_rules") or [])
+        return ctx.modes.upsert(data)
 
     @app.put("/api/modes/{name}")
     async def update_mode(name: str, payload: ModePayload):
         if not ctx.modes.get(name):
             raise HTTPException(404, "模式不存在")
         data = payload.model_dump()
+        validate_replace_rules(data.get("replace_rules") or [])
         if name != data["name"]:
             ctx.modes.delete(name)
         return ctx.modes.upsert(data)
@@ -875,6 +892,11 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 ctx.engine.workdirs = workdirs
                 ctx.engine.temperature = role.get("temperature") if role.get("temperature") is not None else cfg.get("temperature")
                 ctx.engine.max_tokens = role.get("max_tokens") if role.get("max_tokens") is not None else cfg.get("max_tokens")
+                ctx.engine.replace_rules = []
+                if session.get("mode"):
+                    mode = ctx.modes.get(session["mode"])
+                    if mode:
+                        ctx.engine.replace_rules = mode.get("replace_rules") or []
                 set_context(session_id=session_id, role=role["name"], model=model_def.get("model", ""), purpose="chat")
                 system = ctx.build_system(session, role, model_def)
                 thinking = build_thinking(
@@ -926,11 +948,13 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                         if kind == "reasoning":
                             reasoning += event[1]
                             reasoning_buf += event[1]
-                            await ws.send_json({"type": "reasoning", "delta": event[1]})
+                            back = event[2] if len(event) > 2 else 0
+                            await ws.send_json({"type": "reasoning", "delta": event[1], "backspace": back})
                         elif kind == "text":
                             reply += event[1]
                             text_buf += event[1]
-                            await ws.send_json({"type": "text", "delta": event[1]})
+                            back = event[2] if len(event) > 2 else 0
+                            await ws.send_json({"type": "text", "delta": event[1], "backspace": back})
                         elif kind == "tool_call":
                             await ws.send_json(
                                 {"type": "tool_call", "name": event[1].name, "arguments": event[1].arguments}
