@@ -945,6 +945,24 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 blocks = []
                 text_buf = ""
                 reasoning_buf = ""
+
+                def save_interrupted():
+                    if reasoning_buf:
+                        blocks.append({"type": "reasoning", "text": reasoning_buf})
+                    if text_buf:
+                        blocks.append({"type": "text", "text": text_buf})
+                    if reply or reasoning or tool_events or blocks:
+                        ctx.storage.add_message(
+                            session_id,
+                            "character",
+                            reply,
+                            reasoning,
+                            tool_events,
+                            character_name=role["name"],
+                            blocks=blocks,
+                            interrupted=True,
+                        )
+
                 try:
                     async for event in ctx.engine.run_messages(system, history, thinking=thinking):
                         kind = event[0]
@@ -993,7 +1011,9 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                         await ws.send_json({"type": "error", "text": str(e)})
                     except WebSocketDisconnect:
                         pass
+                    save_interrupted()
                     ctx.storage.update_session(session_id, workdirs=workdirs)
+                    ctx.maybe_auto_title(session_id)
                     continue
                 except ApprovalStopped as e:
                     if reasoning_buf:
@@ -1026,21 +1046,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                         pass
                     continue
                 except WebSocketDisconnect:
-                    if reasoning_buf:
-                        blocks.append({"type": "reasoning", "text": reasoning_buf})
-                    if text_buf:
-                        blocks.append({"type": "text", "text": text_buf})
-                    if reply or reasoning or tool_events:
-                        ctx.storage.add_message(
-                            session_id,
-                            "character",
-                            reply,
-                            reasoning,
-                            tool_events,
-                            character_name=role["name"],
-                            blocks=blocks,
-                            interrupted=True,
-                        )
+                    save_interrupted()
                     ctx.storage.update_session(session_id, workdirs=workdirs)
                     ctx.maybe_auto_title(session_id)
                     raise
@@ -1049,7 +1055,9 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
                     traceback.print_exc()
                     send_log.record_error(session_id, f"处理出错：{type(e).__name__}: {e}")
+                    save_interrupted()
                     ctx.storage.update_session(session_id, workdirs=workdirs)
+                    ctx.maybe_auto_title(session_id)
                     try:
                         await ws.send_json({"type": "error", "text": f"处理出错：{type(e).__name__}: {e}"})
                     except WebSocketDisconnect:

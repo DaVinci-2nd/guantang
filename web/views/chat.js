@@ -632,12 +632,16 @@
         const isPlayer = msg.sender === 'player'
         const body = { content: editText.value }
         if (isPlayer) {
-          try {
-            const updated = await api.put(`/api/sessions/${sid}/messages/${msg.id}`, body)
-            msg.content = updated.content
-          } catch (e) {
-            store.notify(e.message)
-            return
+          if (msg.id) {
+            try {
+              const updated = await api.put(`/api/sessions/${sid}/messages/${msg.id}`, body)
+              msg.content = updated.content
+            } catch (e) {
+              store.notify(e.message)
+              return
+            }
+          } else {
+            msg.content = body.content
           }
           editTarget.value = null
           if (sendAfter) {
@@ -670,13 +674,18 @@
         } else {
           body.blocks = []
         }
-        try {
-          const updated = await api.put(`/api/sessions/${sid}/messages/${msg.id}`, body)
-          msg.content = updated.content
-          msg.blocks = updated.blocks || []
-        } catch (e) {
-          store.notify(e.message)
-          return
+        if (msg.id) {
+          try {
+            const updated = await api.put(`/api/sessions/${sid}/messages/${msg.id}`, body)
+            msg.content = updated.content
+            msg.blocks = updated.blocks || []
+          } catch (e) {
+            store.notify(e.message)
+            return
+          }
+        } else {
+          msg.content = body.content
+          msg.blocks = body.blocks || []
         }
         editTarget.value = null
         editBlocks.value = null
