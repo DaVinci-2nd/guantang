@@ -31,6 +31,33 @@ from .zh_translator import ZhTranslator
 REJECT_STOP_TEXT = "此操作已被手动拒绝，对话已中断。"
 
 
+def build_latest_path(messages: list[dict]) -> list[dict]:
+    picks = {}
+    roots = {m["branch_root"] for m in messages if m.get("branch_root")}
+    for r in roots:
+        bs = [m["branch_id"] for m in messages if m.get("branch_root") == r]
+        picks[r] = max(bs)
+
+    def show(m):
+        root = m.get("branch_root", 0)
+        b = m.get("branch_id", 0)
+        if not root:
+            return True
+        return picks.get(root) == b
+
+    return [m for m in messages if show(m)]
+
+
+def _branch_has_output(storage, session_id: int, exclude_id: int, branch_from: int, branch_id: int) -> bool:
+    for m in storage.list_messages(session_id):
+        if m["id"] == exclude_id or m["id"] <= branch_from:
+            continue
+        if m.get("branch_id") == branch_id and m["sender"] == "character":
+            if m.get("content") or m.get("reasoning") or m.get("blocks") or m.get("tool_events"):
+                return True
+    return False
+
+
 def _msg_content_text(content) -> str:
     if isinstance(content, list):
         return "".join(
@@ -68,17 +95,19 @@ def restore_messages_from_log(entries: list[dict], cleared_at: float = 0) -> lis
             reasoning = output.get("reasoning") or ""
             if not (content or reasoning or blocks):
                 continue
-            sig = ("a", json.dumps(blocks, ensure_ascii=False, sort_keys=True))
+            sig = ("a", output.get("branch_id") or 0, json.dumps(blocks, ensure_ascii=False, sort_keys=True))
             if sig in seen:
                 continue
             seen.add(sig)
             restored.append({
                 "sender": "character",
-                "character_name": "",
+                "character_name": (entry.get("context") or {}).get("role") or "",
                 "content": content,
                 "reasoning": reasoning,
                 "blocks": blocks,
                 "interrupted": False,
+                "branch_id": output.get("branch_id") or (entry.get("context") or {}).get("branch_id") or 0,
+                "branch_root": output.get("branch_root") or (entry.get("context") or {}).get("regenerate_from") or 0,
                 "created_at": entry.get("ts", 0),
                 "_sig": sig,
             })
@@ -102,7 +131,7 @@ def restore_messages_from_log(entries: list[dict], cleared_at: float = 0) -> lis
                     except (json.JSONDecodeError, TypeError):
                         args = {"_raw": fn.get("arguments")}
                     blocks.append({"type": "tool", "name": fn.get("name", ""), "arguments": args, "result": ""})
-                sig = ("a", json.dumps(blocks, ensure_ascii=False, sort_keys=True))
+                sig = ("a", (entry.get("context") or {}).get("branch_id") or 0, json.dumps(blocks, ensure_ascii=False, sort_keys=True))
                 if sig in seen:
                     pending_tool_blocks = None
                     continue
@@ -114,6 +143,8 @@ def restore_messages_from_log(entries: list[dict], cleared_at: float = 0) -> lis
                     "reasoning": reasoning,
                     "blocks": blocks,
                     "interrupted": False,
+                    "branch_id": (entry.get("context") or {}).get("branch_id") or 0,
+                    "branch_root": (entry.get("context") or {}).get("regenerate_from") or 0,
                     "created_at": entry.get("ts", 0),
                     "_sig": sig,
                 })
@@ -129,11 +160,31 @@ def restore_messages_from_log(entries: list[dict], cleared_at: float = 0) -> lis
     return restored
 
 
+def build_branch_tree(messages: list[dict]) -> list[dict]:
+    tree = []
+    for m in messages:
+        if m.get("branch_root"):
+            continue
+        node = {
+            "message": {k: v for k, v in m.items() if k != "_sig"},
+            "branches": [],
+        }
+        for bid in sorted({x.get("branch_id") for x in messages if x.get("branch_root") == m.get("id")}):
+            branch_msgs = [
+                {k: v for k, v in x.items() if k != "_sig"}
+                for x in messages
+                if x.get("branch_root") == m.get("id") and x.get("branch_id") == bid
+            ]
+            node["branches"].append({"branch_id": bid, "messages": branch_msgs})
+        tree.append(node)
+    return tree
+
+
 def merge_messages(storage_msgs: list[dict], restored: list[dict]) -> list[dict]:
     storage_by_key = {}
     for m in storage_msgs:
         key = ("u", (m.get("content") or "").strip()) if m["sender"] == "player" else (
-            "a", json.dumps(m.get("blocks") or [], ensure_ascii=False, sort_keys=True)
+            "a", m.get("branch_id") or 0, json.dumps(m.get("blocks") or [], ensure_ascii=False, sort_keys=True)
         )
         storage_by_key.setdefault(key, []).append(m)
     result = []
@@ -150,7 +201,7 @@ def merge_messages(storage_msgs: list[dict], restored: list[dict]) -> list[dict]
             result.append({k: v for k, v in r.items() if k != "_sig"})
     for m in storage_msgs:
         key = ("u", (m.get("content") or "").strip()) if m["sender"] == "player" else (
-            "a", json.dumps(m.get("blocks") or [], ensure_ascii=False, sort_keys=True)
+            "a", m.get("branch_id") or 0, json.dumps(m.get("blocks") or [], ensure_ascii=False, sort_keys=True)
         )
         if key in seen:
             continue
@@ -807,7 +858,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     async def list_messages(session_id: int):
         if not ctx.storage.get_session(session_id):
             raise HTTPException(404, "会话不存在")
-        return ctx.messages_with_restored(session_id)
+        return build_latest_path(ctx.messages_with_restored(session_id))
 
     @app.post("/api/sessions/{session_id}/messages")
     async def add_message(session_id: int, payload: MessagePayload):
@@ -897,6 +948,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             "auto_title": cfg.auto_title(),
             "messages": ctx.storage.list_messages(session_id),
             "send_log": send_log.for_session(session_id),
+            "branch_tree": build_branch_tree(ctx.messages_with_restored(session_id)),
         }
 
     @app.post("/api/files")
@@ -1077,7 +1129,19 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                     return msg.get("type") == "abort"
 
                 ctx.engine.check_cancel = check_cancel
-                set_context(session_id=session_id, role=role["name"], model=model_def.get("model", ""), purpose="chat")
+                regenerate_from = None
+                if data.get("regenerate_from"):
+                    try:
+                        regenerate_from = int(data.get("regenerate_from"))
+                    except (TypeError, ValueError):
+                        regenerate_from = None
+                    if regenerate_from and not ctx.storage.get_message(session_id, regenerate_from):
+                        regenerate_from = None
+                latest_branch = ctx.storage.latest_branch_id(session_id)
+                set_context(
+                    session_id=session_id, role=role["name"], model=model_def.get("model", ""),
+                    purpose="chat", regenerate_from=regenerate_from or 0, branch_id=latest_branch,
+                )
                 system = ctx.build_system(session, role, model_def)
                 thinking = build_thinking(
                     model_def.get("model", ""),
@@ -1114,7 +1178,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                                 await ws.send_json({"type": "recognized", "message": updated})
                             except WebSocketDisconnect:
                                 raise
-                    history = ctx.history_to_openai(history_messages)
+                    history = ctx.history_to_openai(build_latest_path(history_messages))
                     ctx.maybe_auto_title(session_id, ws)
                 reasoning = ""
                 reply = ""
@@ -1122,9 +1186,12 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 blocks = []
                 text_buf = ""
                 reasoning_buf = ""
+                if regenerate_from:
+                    ctx.storage.mark_branch_root(session_id, regenerate_from, latest_branch)
                 ai_msg = await asyncio.to_thread(
                     ctx.storage.add_message,
                     session_id, "character", "", "", [], character_name=role["name"], blocks=[], interrupted=True,
+                    branch_id=latest_branch, branch_root=regenerate_from or 0,
                 )
                 ai_id = ai_msg["id"]
                 flush_count = 0
@@ -1154,7 +1221,32 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                     )
 
                 async def finalize(interrupted):
-                    await persist(interrupted)
+                    output = build_output()
+                    if regenerate_from:
+                        had_output = await asyncio.to_thread(
+                            _branch_has_output, ctx.storage, session_id, ai_id, regenerate_from, latest_branch
+                        )
+                        if had_output:
+                            new_branch = await asyncio.to_thread(ctx.storage.next_branch_id, session_id)
+                            await asyncio.to_thread(
+                                ctx.storage.update_message,
+                                session_id, ai_id, content=output["text"], blocks=output["blocks"], interrupted=interrupted,
+                                branch_id=new_branch, branch_root=regenerate_from,
+                            )
+                            send_log.record_output(session_id, {**output, "branch_id": new_branch, "branch_root": regenerate_from})
+                        else:
+                            await asyncio.to_thread(ctx.storage.delete_branch_after, session_id, regenerate_from, latest_branch)
+                            await asyncio.to_thread(
+                                ctx.storage.update_message,
+                                session_id, ai_id, content=output["text"], blocks=output["blocks"], interrupted=True,
+                            )
+                            send_log.record_output(session_id, output)
+                    else:
+                        await asyncio.to_thread(
+                            ctx.storage.update_message,
+                            session_id, ai_id, content=output["text"], blocks=output["blocks"], interrupted=interrupted,
+                        )
+                        send_log.record_output(session_id, output)
                     return await asyncio.to_thread(ctx.storage.get_message, session_id, ai_id)
 
                 try:
@@ -1205,10 +1297,26 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                             await persist(True)
                 except asyncio.CancelledError:
                     output = build_output()
-                    send_log.record_output(session_id, output)
-                    ctx.storage.update_message(
-                        session_id, ai_id, content=output["text"], blocks=output["blocks"], interrupted=True
-                    )
+                    if regenerate_from:
+                        had_output = _branch_has_output(ctx.storage, session_id, ai_id, regenerate_from, latest_branch)
+                        if had_output:
+                            new_branch = ctx.storage.next_branch_id(session_id)
+                            ctx.storage.update_message(
+                                session_id, ai_id, content=output["text"], blocks=output["blocks"], interrupted=True,
+                                branch_id=new_branch, branch_root=regenerate_from,
+                            )
+                            send_log.record_output(session_id, {**output, "branch_id": new_branch, "branch_root": regenerate_from})
+                        else:
+                            ctx.storage.delete_branch_after(session_id, regenerate_from, latest_branch)
+                            ctx.storage.update_message(
+                                session_id, ai_id, content=output["text"], blocks=output["blocks"], interrupted=True,
+                            )
+                            send_log.record_output(session_id, output)
+                    else:
+                        ctx.storage.update_message(
+                            session_id, ai_id, content=output["text"], blocks=output["blocks"], interrupted=True,
+                        )
+                        send_log.record_output(session_id, output)
                     ctx.storage.update_session(session_id, workdirs=workdirs)
                     ctx.maybe_auto_title(session_id)
                     raise

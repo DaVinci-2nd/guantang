@@ -339,7 +339,7 @@
         await sendContent('', [], sid, true, rows)
       }
 
-      async function sendContent(content, attList, sessionId, persistPlayer = true, superMessages = null) {
+      async function sendContent(content, attList, sessionId, persistPlayer = true, superMessages = null, regenerateFrom = null) {
         if (store.streaming) return
         const sid = sessionId || store.currentSessionId
         if (!sid) return
@@ -509,11 +509,10 @@
           }
         }
         ws.onopen = () => {
-          if (isSuper) {
-            ws.send(JSON.stringify({ session_id: sid, super_messages: superMessages }))
-          } else {
-            ws.send(JSON.stringify({ session_id: sid, message: content }))
-          }
+          const payload = { session_id: sid, message: content }
+          if (regenerateFrom) payload.regenerate_from = regenerateFrom
+          if (isSuper) payload.super_messages = superMessages
+          ws.send(JSON.stringify(payload))
         }
       }
 
@@ -587,12 +586,9 @@
         if (!player || store.streaming) return
         const sid = store.currentSessionId
         if (!sid) return
-        if (player.id) {
-          await api.del(`/api/sessions/${sid}/messages?after=${player.id}`)
-        }
         const idx = store.messages.findIndex((m) => m.key === player.key)
         store.messages = store.messages.slice(0, idx + 1)
-        await sendContent(player.content, player.attachments || [], sid, false)
+        await sendContent(player.content, player.attachments || [], sid, false, null, player.id)
       }
 
       function openEdit(msg) {
@@ -650,12 +646,9 @@
           editTarget.value = null
           if (sendAfter) {
             const player = msg
-            if (player.id) {
-              await api.del(`/api/sessions/${sid}/messages?after=${player.id}`)
-            }
             const idx = store.messages.findIndex((m) => m.key === player.key)
             store.messages = store.messages.slice(0, idx + 1)
-            await sendContent(player.content, player.attachments || [], sid, false)
+            await sendContent(player.content, player.attachments || [], sid, false, null, player.id)
           }
           return
         }

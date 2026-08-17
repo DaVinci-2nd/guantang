@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS messages (
     attachments TEXT NOT NULL DEFAULT '[]',
     blocks TEXT NOT NULL DEFAULT '[]',
     interrupted INTEGER NOT NULL DEFAULT 0,
+    branch_id INTEGER NOT NULL DEFAULT 0,
+    branch_root INTEGER NOT NULL DEFAULT 0,
     created_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
@@ -67,6 +69,10 @@ class Storage:
                 conn.execute("ALTER TABLE messages ADD COLUMN blocks TEXT NOT NULL DEFAULT '[]'")
             if "interrupted" not in mcols:
                 conn.execute("ALTER TABLE messages ADD COLUMN interrupted INTEGER NOT NULL DEFAULT 0")
+            if "branch_id" not in mcols:
+                conn.execute("ALTER TABLE messages ADD COLUMN branch_id INTEGER NOT NULL DEFAULT 0")
+            if "branch_root" not in mcols:
+                conn.execute("ALTER TABLE messages ADD COLUMN branch_root INTEGER NOT NULL DEFAULT 0")
 
     def create_session(self, character_name: str = "", mode: str = "") -> dict:
         now = _now()
@@ -145,11 +151,13 @@ class Storage:
         attachments: list | None = None,
         blocks: list | None = None,
         interrupted: bool = False,
+        branch_id: int = 0,
+        branch_root: int = 0,
     ) -> dict:
         now = _now()
         with self._conn() as conn:
             cur = conn.execute(
-                "INSERT INTO messages (session_id, sender, character_name, content, reasoning, tool_events, attachments, blocks, interrupted, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO messages (session_id, sender, character_name, content, reasoning, tool_events, attachments, blocks, interrupted, branch_id, branch_root, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     session_id,
                     sender,
@@ -160,6 +168,8 @@ class Storage:
                     json.dumps(attachments or [], ensure_ascii=False),
                     json.dumps(blocks or [], ensure_ascii=False),
                     1 if interrupted else 0,
+                    branch_id,
+                    branch_root,
                     now,
                 ),
             )
@@ -167,7 +177,7 @@ class Storage:
             row = conn.execute("SELECT * FROM messages WHERE id = ?", (cur.lastrowid,)).fetchone()
             return self._row_to_message(row)
 
-    def update_message(self, session_id: int, message_id: int, content: str | None = None, blocks: list | None = None, attachments: list | None = None, interrupted: bool | None = None) -> dict | None:
+    def update_message(self, session_id: int, message_id: int, content: str | None = None, blocks: list | None = None, attachments: list | None = None, interrupted: bool | None = None, reasoning: str | None = None, branch_id: int | None = None, branch_root: int | None = None) -> dict | None:
         fields = []
         values = []
         if content is not None:
@@ -182,6 +192,15 @@ class Storage:
         if interrupted is not None:
             fields.append("interrupted = ?")
             values.append(1 if interrupted else 0)
+        if reasoning is not None:
+            fields.append("reasoning = ?")
+            values.append(reasoning)
+        if branch_id is not None:
+            fields.append("branch_id = ?")
+            values.append(branch_id)
+        if branch_root is not None:
+            fields.append("branch_root = ?")
+            values.append(branch_root)
         if not fields:
             return self.get_message(session_id, message_id)
         values.append(message_id)
@@ -196,6 +215,28 @@ class Storage:
                 "SELECT * FROM messages WHERE id = ? AND session_id = ?", (message_id, session_id)
             ).fetchone()
             return self._row_to_message(row) if row else None
+
+    def latest_branch_id(self, session_id: int) -> int:
+        with self._conn() as conn:
+            row = conn.execute("SELECT COALESCE(MAX(branch_id), 0) FROM messages WHERE session_id = ?", (session_id,)).fetchone()
+            return row[0] or 0
+
+    def next_branch_id(self, session_id: int) -> int:
+        return self.latest_branch_id(session_id) + 1
+
+    def delete_branch_after(self, session_id: int, message_id: int, branch_id: int):
+        with self._conn() as conn:
+            conn.execute(
+                "DELETE FROM messages WHERE session_id = ? AND id > ? AND branch_id = ?",
+                (session_id, message_id, branch_id),
+            )
+
+    def mark_branch_root(self, session_id: int, message_id: int, branch_id: int):
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE messages SET branch_root = ? WHERE session_id = ? AND id > ? AND branch_id = ? AND branch_root = 0",
+                (message_id, session_id, message_id, branch_id),
+            )
 
     def delete_messages_after(self, session_id: int, message_id: int):
         now = _now()
