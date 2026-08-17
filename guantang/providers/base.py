@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 from dataclasses import dataclass, field
 
 import httpx
@@ -19,6 +20,7 @@ class ProviderError(Exception):
 class BaseProvider:
     name = "base"
     endpoint_path = "/chat/completions"
+    context_limit = None
 
     def __init__(self, base_url: str, api_key: str, model: str = "default", timeout: int = 120, max_retries: int = 2):
         self.base_url = base_url.rstrip("/")
@@ -87,6 +89,22 @@ class BaseProvider:
                                     entry["request"]["max_tokens"] = max_tokens
                                     send_log.append_event(entry, ["warning", f"max_tokens 超出模型上限，已钳制为 {limit}"])
                                     continue
+                            if resp.status_code == 400 and "maximum context length" in lowered and max_tokens is not None:
+                                m = re.search(
+                                    r"maximum context length is (\d+) tokens[^\n]*\((\d+) in the messages",
+                                    body,
+                                )
+                                if m:
+                                    limit = int(m.group(1))
+                                    self.context_limit = limit
+                                    msgs_tokens = int(m.group(2))
+                                    new_max = max(1, limit - msgs_tokens - 64)
+                                    if new_max < max_tokens:
+                                        max_tokens = new_max
+                                        payload = self._payload(messages, tools, temperature, max_tokens, thinking=thinking)
+                                        entry["request"]["max_tokens"] = max_tokens
+                                        send_log.append_event(entry, ["warning", f"上下文超限，max_tokens 已降为 {new_max}"])
+                                        continue
                             raise ProviderError(f"HTTP {resp.status_code}：{body[:500]}")
                         async for line in resp.aiter_lines():
                             line = line.strip()

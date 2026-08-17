@@ -30,6 +30,38 @@ class ApprovalStopped(Exception):
         self.arguments = arguments
 
 
+def _estimate_tokens(msgs: list[dict]) -> int:
+    total = 0
+    for m in msgs:
+        content = m.get("content")
+        if isinstance(content, list):
+            text = "".join(p.get("text", "") for p in content if isinstance(p, dict))
+        elif isinstance(content, str):
+            text = content
+        else:
+            text = ""
+        total += len(text) // 2 + 4
+        for tc in m.get("tool_calls") or []:
+            total += len(json.dumps(tc, ensure_ascii=False)) // 2
+    return total
+
+
+def _trim_messages(messages: list[dict], budget: int) -> list[dict]:
+    if _estimate_tokens(messages) <= budget:
+        return messages
+    result = list(messages)
+    i = 1
+    while _estimate_tokens(result) > budget and i < len(result):
+        if result[i].get("role") == "user":
+            j = i + 1
+            while j < len(result) and result[j].get("role") != "user":
+                j += 1
+            del result[i:j]
+        else:
+            i += 1
+    return result
+
+
 class Engine:
     def __init__(
         self,
@@ -69,6 +101,11 @@ class Engine:
             builtin_defs = self._load_builtin_defs()
             openai_tools = await self._build_openai_tools(builtin_defs)
             replacer = StreamReplacer(self.replace_rules)
+            limit = getattr(self.provider, "context_limit", None)
+            if limit:
+                budget = limit - (self.max_tokens or 0) - 256
+                if budget > 1024:
+                    messages = _trim_messages(messages, budget)
 
             tool_calls: list[ToolCall] = []
             reply_buf = ""
