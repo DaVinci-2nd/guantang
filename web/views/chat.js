@@ -19,6 +19,9 @@
       const editorDirty = ref(false)
       const editingAtts = ref([])
       const superData = ref(null)
+      const workdirModal = ref(false)
+      const workdirList = ref([])
+      const workdirInput = ref('')
 
       const visibleMessages = computed(() => store.computeVisibleMessages())
 
@@ -697,6 +700,36 @@
         editBlocks.value = null
       }
 
+      function openWorkdirModal() {
+        const s = store.currentSession()
+        workdirList.value = [...((s && s.workdirs) || [])]
+        workdirInput.value = ''
+        workdirModal.value = true
+      }
+
+      async function addWorkdir() {
+        const v = workdirInput.value.trim()
+        if (!v) return
+        if (!workdirList.value.includes(v)) workdirList.value.push(v)
+        workdirInput.value = ''
+        await persistWorkdirs()
+      }
+
+      async function removeWorkdir(i) {
+        workdirList.value.splice(i, 1)
+        await persistWorkdirs()
+      }
+
+      async function persistWorkdirs() {
+        try {
+          await store.saveSessionWorkdirs(workdirList.value)
+        } catch (e) {
+          store.notify(e.message)
+          const s = store.currentSession()
+          workdirList.value = [...((s && s.workdirs) || [])]
+        }
+      }
+
       async function showDebug() {
         const sid = store.currentSessionId
         if (!sid) return
@@ -779,6 +812,7 @@
         abortStream, regenerate, editTarget, editText, editBlocks, openEdit, closeEdit, saveEdit,
         blockTypeName, moveBlock, onApprove,
         debugData, showDebug, debugJson, previewTarget, openPreview,
+        workdirModal, workdirList, workdirInput, openWorkdirModal, addWorkdir, removeWorkdir,
         selectedBranch, selectBranch, branchLabel, branchSummary, isSelectedBranch, branchMsgKind,
         onEditorKeydown, onEditorPaste, onEditorInput: markDirty,
         superData, superSend, addSuperRow, removeSuperRow, superRoleName, submitSuper, onSendClick,

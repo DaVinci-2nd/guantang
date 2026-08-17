@@ -299,6 +299,7 @@ class SessionPayload(BaseModel):
     character_name: str = ""
     mode: str = ""
     title: str | None = None
+    workdirs: list[str] | None = None
 
 
 class MessagePayload(BaseModel):
@@ -863,6 +864,27 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             raise HTTPException(404, "会话不存在")
         if payload.title is not None:
             return ctx.storage.update_session(session_id, title=payload.title, title_set=1)
+        if payload.workdirs is not None:
+            norm = []
+            seen = set()
+            for raw in payload.workdirs:
+                path = str(raw or "").strip()
+                if not path:
+                    continue
+                try:
+                    p = Path(path).expanduser().resolve()
+                except Exception as e:
+                    raise HTTPException(400, f"路径解析错误：{path}：{e}")
+                if not p.is_dir():
+                    raise HTTPException(400, f"目录不存在或不是文件夹：{p}")
+                if not os.access(str(p), os.R_OK):
+                    raise HTTPException(400, f"目录不可读：{p}")
+                key = str(p).lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                norm.append(str(p))
+            return ctx.storage.update_session(session_id, workdirs=norm)
         if payload.character_name:
             if not ctx.roles.get(payload.character_name):
                 raise HTTPException(400, "角色不存在")

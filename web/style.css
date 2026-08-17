@@ -238,16 +238,82 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
-.chat-head-title {
+.chat-head-center {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.chat-head-title {
   text-align: center;
   font-size: 13px;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  min-width: 0;
+  max-width: 100%;
 }
+
+.chat-head-workdirs {
+  font-size: 11px;
+  color: var(--text-sub);
+  cursor: pointer;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 8px;
+  border-radius: 4px;
+}
+
+.chat-head-workdirs:hover { color: var(--text); background: var(--bg-hover); }
+
+.workdir-modal { display: flex; flex-direction: column; gap: 10px; }
+
+.workdir-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.workdir-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: var(--bg);
+}
+
+.workdir-path {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text);
+  word-break: break-all;
+}
+
+.workdir-empty { font-size: 12px; color: var(--text-sub); padding: 4px 2px; }
+
+.workdir-add-row { display: flex; gap: 8px; }
+
+.workdir-input {
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  padding: 6px 10px;
+  font-size: 13px;
+  outline: none;
+}
+
+.workdir-input:focus { border-color: var(--accent); }
 
 
 .chat-role { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }

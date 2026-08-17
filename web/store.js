@@ -82,6 +82,31 @@
     return store.sessions.find((s) => s.id === store.currentSessionId) || null
   }
 
+  function workdirName(path) {
+    if (!path) return ''
+    const norm = String(path).replace(/[\\/]+$/, '')
+    const parts = norm.split(/[\\/]/)
+    const name = parts[parts.length - 1] || ''
+    return name || norm
+  }
+
+  function workdirSummary() {
+    const s = currentSession()
+    const list = (s && s.workdirs) || []
+    if (!list.length) return '无工作目录'
+    if (list.length === 1) return workdirName(list[0])
+    return `${workdirName(list[0])} 等${list.length}个目录`
+  }
+
+  async function saveSessionWorkdirs(list) {
+    const s = currentSession()
+    if (!s) return
+    const updated = await api.put(`/api/sessions/${s.id}`, { workdirs: list })
+    const idx = store.sessions.findIndex((x) => x.id === s.id)
+    if (idx >= 0) store.sessions[idx] = updated
+    return updated
+  }
+
   function currentRole() {
     const s = currentSession()
     if (!s) return null
@@ -260,6 +285,9 @@
   store.loadSessions = loadSessions
   store.currentSession = currentSession
   store.currentRole = currentRole
+  store.workdirName = workdirName
+  store.workdirSummary = workdirSummary
+  store.saveSessionWorkdirs = saveSessionWorkdirs
   store.selectSession = selectSession
   store.newSession = newSession
   store.switchSessionRole = switchSessionRole
