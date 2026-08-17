@@ -1203,6 +1203,15 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                         flush_count += 1
                         if flush_count % 20 == 0:
                             await persist(True)
+                except asyncio.CancelledError:
+                    output = build_output()
+                    send_log.record_output(session_id, output)
+                    ctx.storage.update_message(
+                        session_id, ai_id, content=output["text"], blocks=output["blocks"], interrupted=True
+                    )
+                    ctx.storage.update_session(session_id, workdirs=workdirs)
+                    ctx.maybe_auto_title(session_id)
+                    raise
                 except ProviderError as e:
                     await persist(True)
                     try:

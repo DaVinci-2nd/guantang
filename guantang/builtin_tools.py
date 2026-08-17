@@ -511,7 +511,7 @@ def _has_cd_escape(command: str, workdirs: list, cwd: Path) -> bool:
     return False
 
 
-async def _kill_process_tree(proc):
+def _kill_process_tree(proc):
     if proc.returncode is not None:
         return
     if os.name == "nt":
@@ -539,18 +539,18 @@ async def _wait_command(proc, check_cancel, timeout=COMMAND_TIMEOUT):
                 return stdout, stderr, None
             except asyncio.TimeoutError:
                 if time.monotonic() - start >= timeout:
-                    await _kill_process_tree(proc)
+                    _kill_process_tree(proc)
                     task.cancel()
                     return None, None, "超时"
                 if check_cancel is not None:
                     cancelled = await check_cancel()
                     if cancelled:
-                        await _kill_process_tree(proc)
+                        _kill_process_tree(proc)
                         task.cancel()
                         return None, None, "中断"
                 continue
     except asyncio.CancelledError:
-        await _kill_process_tree(proc)
+        _kill_process_tree(proc)
         task.cancel()
         raise
 
@@ -586,7 +586,7 @@ async def execute_run_command(args, workdirs, check_cancel=None):
     try:
         stdout, stderr, reason = await _wait_command(proc, check_cancel)
     except asyncio.CancelledError:
-        await _kill_process_tree(proc)
+        _kill_process_tree(proc)
         raise
     if reason == "超时":
         return f"命令执行超时：{COMMAND_TIMEOUT} 秒"
