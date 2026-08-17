@@ -475,6 +475,23 @@ async def execute_create_dir(args, workdirs):
 
 _CD_PATTERN = re.compile(r"\bcd\s+([^\s&|;]*)", re.IGNORECASE)
 
+BLOCKED_COMMAND_PATTERNS = [
+    r"\btaskkill\b",
+    r"\btskill\b",
+    r"\bStop-Process\b",
+    r"\bkill\s+-9\b",
+    r"\bkill\s+-f\b",
+    r"\bpkill\b",
+    r"\bkillall\b",
+]
+
+
+def _has_blocked_command(command: str) -> bool:
+    for pat in BLOCKED_COMMAND_PATTERNS:
+        if re.search(pat, command, re.IGNORECASE):
+            return True
+    return False
+
 
 def _has_cd_escape(command: str, workdirs: list, cwd: Path) -> bool:
     for m in _CD_PATTERN.finditer(command):
@@ -555,6 +572,8 @@ async def execute_run_command(args, workdirs, check_cancel=None):
         cwd = Path(workdirs[0]).expanduser().resolve()
     if _has_cd_escape(command, workdirs, cwd):
         return "执行失败：命令试图切换到工作目录之外，已阻止"
+    if _has_blocked_command(command):
+        return "执行失败：命令包含被禁止的进程终止操作，已阻止"
     try:
         proc = await asyncio.create_subprocess_shell(
             command,

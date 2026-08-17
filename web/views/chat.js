@@ -491,7 +491,6 @@
           }
         }
         ws.onerror = () => {
-          store.notify('连接失败')
           aiMsg.streaming = false
           store.streaming = false
         }
