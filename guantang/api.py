@@ -39,10 +39,12 @@ def _msg_content_text(content) -> str:
     return str(content or "")
 
 
-def restore_messages_from_log(entries: list[dict]) -> list[dict]:
+def restore_messages_from_log(entries: list[dict], cleared_at: float = 0) -> list[dict]:
     restored = []
     seen = set()
     for entry in reversed(entries):
+        if cleared_at and entry.get("ts", 0) > cleared_at:
+            continue
         if (entry.get("context") or {}).get("purpose") != "chat":
             continue
         msgs = (entry.get("request") or {}).get("messages") or []
@@ -403,7 +405,9 @@ class AppContext:
 
     def messages_with_restored(self, session_id: int) -> list[dict]:
         msgs = self.storage.list_messages(session_id)
-        restored = restore_messages_from_log(send_log.for_session(session_id))
+        session = self.storage.get_session(session_id)
+        cleared_at = float(session.get("cleared_at") or 0) if session else 0
+        restored = restore_messages_from_log(send_log.for_session(session_id), cleared_at)
         if not restored:
             return msgs
         return merge_messages(msgs, restored)
@@ -803,11 +807,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     async def list_messages(session_id: int):
         if not ctx.storage.get_session(session_id):
             raise HTTPException(404, "会话不存在")
-        msgs = ctx.storage.list_messages(session_id)
-        restored = restore_messages_from_log(send_log.for_session(session_id))
-        if not restored:
-            return msgs
-        return merge_messages(msgs, restored)
+        return ctx.messages_with_restored(session_id)
 
     @app.post("/api/sessions/{session_id}/messages")
     async def add_message(session_id: int, payload: MessagePayload):
@@ -822,8 +822,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         if after is not None:
             ctx.storage.delete_messages_after(session_id, after)
         else:
-            with ctx.storage._conn() as conn:
-                conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+            ctx.storage.clear_session_messages(session_id)
         return {"ok": True}
 
     class UpdateMessagePayload(BaseModel):

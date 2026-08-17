@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     character_name TEXT NOT NULL DEFAULT '',
     mode TEXT NOT NULL DEFAULT '',
     workdirs TEXT NOT NULL DEFAULT '[]',
+    cleared_at REAL NOT NULL DEFAULT 0,
     title_set INTEGER NOT NULL DEFAULT 0,
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL
@@ -57,6 +58,8 @@ class Storage:
                 conn.execute("ALTER TABLE sessions ADD COLUMN title_set INTEGER NOT NULL DEFAULT 0")
             if "workdirs" not in cols:
                 conn.execute("ALTER TABLE sessions ADD COLUMN workdirs TEXT NOT NULL DEFAULT '[]'")
+            if "cleared_at" not in cols:
+                conn.execute("ALTER TABLE sessions ADD COLUMN cleared_at REAL NOT NULL DEFAULT 0")
             mcols = [r["name"] for r in conn.execute("PRAGMA table_info(messages)").fetchall()]
             if "attachments" not in mcols:
                 conn.execute("ALTER TABLE messages ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'")
@@ -197,10 +200,18 @@ class Storage:
     def delete_messages_after(self, session_id: int, message_id: int):
         now = _now()
         with self._conn() as conn:
+            row = conn.execute("SELECT created_at FROM messages WHERE id = ? AND session_id = ?", (message_id, session_id)).fetchone()
+            cleared_at = row["created_at"] if row else now
             conn.execute(
                 "DELETE FROM messages WHERE session_id = ? AND id > ?", (session_id, message_id)
             )
-            conn.execute("UPDATE sessions SET updated_at = ? WHERE id = ?", (now, session_id))
+            conn.execute("UPDATE sessions SET cleared_at = ?, updated_at = ? WHERE id = ?", (cleared_at, now, session_id))
+
+    def clear_session_messages(self, session_id: int):
+        now = _now()
+        with self._conn() as conn:
+            conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+            conn.execute("UPDATE sessions SET cleared_at = ?, updated_at = ? WHERE id = ?", (now, now, session_id))
 
     @staticmethod
     def _row_to_message(row: sqlite3.Row) -> dict:
