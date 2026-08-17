@@ -730,7 +730,9 @@
         await store.saveUi()
       }
 
-      watch(() => store.currentSessionId, () => scrollBottom(true))
+      watch(() => store.messages, (nv, ov) => {
+        if (nv !== ov) scrollBottom(true)
+      })
 
       return {
         store, chatList, editorEl, fileInput, filteredSessions, modeOptions, filterOptions,
