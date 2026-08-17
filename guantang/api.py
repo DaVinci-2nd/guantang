@@ -107,7 +107,7 @@ def restore_messages_from_log(entries: list[dict]) -> list[dict]:
                 seen.add(sig)
                 restored.append({
                     "sender": "character",
-                    "character_name": "",
+                    "character_name": (entry.get("context") or {}).get("role") or "",
                     "content": content,
                     "reasoning": reasoning,
                     "blocks": blocks,
