@@ -58,6 +58,8 @@
         return store.sessions.filter((s) => s.character_name === store.filterCharacter)
       })
       const filterOptions = computed(() => ['全部', ...store.sessionCharacters])
+      const sessionFile = ref(null)
+      const chatFile = ref(null)
       async function renameSession(id) {
         const s = store.sessions.find((x) => x.id === id)
         if (!s) return
@@ -67,7 +69,33 @@
         const idx = store.sessions.findIndex((x) => x.id === id)
         if (idx >= 0) store.sessions[idx] = updated
       }
-      return { store, filteredSessions, filterOptions, renameSession, selectSession: store.selectSession, newSession: store.newSession }
+      async function importSessionFile(e) {
+        const file = e.target.files[0]
+        e.target.value = ''
+        if (!file) return
+        try {
+          const data = JSON.parse(await file.text())
+          await api.post('/api/sessions/import', data)
+          store.notify('已导入会话', 'ok')
+          await store.loadSessions()
+        } catch (err) {
+          store.notify(err.message)
+        }
+      }
+      async function importChatFile(e) {
+        const file = e.target.files[0]
+        e.target.value = ''
+        if (!file) return
+        try {
+          const res = await api.upload('/api/sessions/import-chat', file)
+          const match = res.roles_match ? '' : '（本地无匹配角色）'
+          store.notify('已导入酒馆聊天' + match, 'ok')
+          await store.loadSessions()
+        } catch (err) {
+          store.notify(err.message)
+        }
+      }
+      return { store, filteredSessions, filterOptions, renameSession, selectSession: store.selectSession, newSession: store.newSession, sessionFile, chatFile, importSessionFile, importChatFile }
     },
   }
 

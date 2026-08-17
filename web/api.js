@@ -35,5 +35,17 @@
       if (!resp.ok) throw new Error((await resp.text().catch(() => '')) || '上传失败')
       return resp.json()
     },
+    download: async (url, filename) => {
+      const resp = await fetch(url)
+      if (!resp.ok) throw new Error('下载失败')
+      const blob = await resp.blob()
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000)
+    },
   }
 })()

@@ -588,6 +588,17 @@
         await store.loadSessions()
       }
 
+      async function exportSession() {
+        const sid = store.currentSessionId
+        if (!sid) return
+        try {
+          await api.download(`/api/sessions/${sid}/export`, `session_${sid}.json`)
+          store.notify('已导出会话', 'ok')
+        } catch (e) {
+          store.notify(e.message)
+        }
+      }
+
       function findPlayerMsg(msg) {
         if (msg.sender === 'player') return msg
         const idx = store.messages.findIndex((m) => m.key === msg.key)
@@ -807,7 +818,7 @@
       return {
         store, chatList, editorEl, fileInput, filteredSessions, modeOptions, filterOptions,
         visibleMessages,
-        currentRole, currentSession, newSession, deleteCurrentSession, formatTime,
+        currentRole, currentSession, newSession, deleteCurrentSession, exportSession, formatTime,
         renderMarkdown, onModeChange, send, onFiles, toggleCentered, canSend,
         abortStream, regenerate, editTarget, editText, editBlocks, openEdit, closeEdit, saveEdit,
         blockTypeName, moveBlock, onApprove,

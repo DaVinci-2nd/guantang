@@ -59,13 +59,13 @@ class RoleStore:
         folder = self.dir / data["name"]
         folder.mkdir(parents=True, exist_ok=True)
         _dump_yaml(folder / "role.yaml", {k: v for k, v in data.items() if k in YAML_FIELDS and v is not None})
-        setting = data.get("setting", "")
+        setting = data.get("setting", "") or ""
         if setting:
             (folder / "role.md").write_text(setting, encoding="utf-8")
         return self.get(data["name"])
 
     def update(self, name: str, data: dict) -> dict | None:
-        validate_name(data["name"])
+        validate_name(str(data.get("name", name)))
         folder = self.dir / name
         if not (folder / "role.yaml").exists():
             return None
@@ -81,7 +81,7 @@ class RoleStore:
         saved["name"] = name
         _dump_yaml(folder / "role.yaml", saved)
         if "setting" in data:
-            (folder / "role.md").write_text(data["setting"], encoding="utf-8")
+            (folder / "role.md").write_text(str(data["setting"] or ""), encoding="utf-8")
         return self.get(name)
 
     def save_setting(self, name: str, text: str):

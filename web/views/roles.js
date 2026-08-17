@@ -7,6 +7,9 @@
       const editor = ref(null)
       const preview = ref('')
       const avatarFile = ref(null)
+      const importCardFile = ref(null)
+      const importCherryFile = ref(null)
+      const importNativeFile = ref(null)
 
       const thinkingPreset = computed(() => {
         if (!editor.value || !editor.value.model) return null
@@ -91,7 +94,35 @@
         try { return marked.parse(text || '') } catch (e) { return text || '' }
       }
 
-      return { store, editor, preview, avatarFile, thinkingPreset, openEditor, saveRole, removeRole, uploadAvatar, onAvatarFile, previewPrompt, renderMarkdown }
+      function clickImport(kind) {
+        if (kind === 'card') importCardFile.value.click()
+        else if (kind === 'cherry') importCherryFile.value.click()
+        else importNativeFile.value.click()
+      }
+
+      async function onImportFile(e, url) {
+        const file = e.target.files[0]
+        e.target.value = ''
+        if (!file) return
+        try {
+          const res = await api.upload(url, file)
+          store.notify(`已导入角色：${res.name}`, 'ok')
+          await store.loadState()
+        } catch (err) {
+          store.notify(err.message)
+        }
+      }
+
+      async function exportRole(name) {
+        try {
+          await api.download(`/api/roles/${encodeURIComponent(name)}/export`, `${name}.png`)
+          store.notify('已导出角色卡', 'ok')
+        } catch (err) {
+          store.notify(err.message)
+        }
+      }
+
+      return { store, editor, preview, avatarFile, thinkingPreset, openEditor, saveRole, removeRole, uploadAvatar, onAvatarFile, previewPrompt, renderMarkdown, importCardFile, importCherryFile, importNativeFile, clickImport, onImportCard: (e) => onImportFile(e, '/api/roles/import-card'), onImportCherry: (e) => onImportFile(e, '/api/roles/import-cherry'), onImportNative: (e) => onImportFile(e, '/api/roles/import-native'), exportRole }
     },
   }
 

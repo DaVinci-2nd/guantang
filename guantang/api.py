@@ -5,14 +5,17 @@ import mimetypes
 import os
 import uuid
 from pathlib import Path
+from urllib.parse import quote as url_quote
 
 from fastapi import FastAPI, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .builtin_tools import parse_tools, read_approval_reject_text, tools_to_yaml
+from .cards import build_card_png, card_to_setting, parse_card
+from .cherry import parse_assistant
 from .config import Config
 from .engine import ApprovalStopped, Engine
 from .mcp_client import MCPManager
@@ -255,17 +258,17 @@ def validate_replace_rules(rules: list[dict]):
 
 class RolePayload(BaseModel):
     name: str
-    avatar: str = ""
-    model: str = ""
-    thinking_mode: str = ""
-    thinking_strength: str = "medium"
-    thinking_custom: str = ""
+    avatar: str | None = ""
+    model: str | None = ""
+    thinking_mode: str | None = ""
+    thinking_strength: str | None = "medium"
+    thinking_custom: str | None = ""
     temperature: float | None = 1.0
     max_tokens: int | None = 4096
     skills: list[str] = Field(default_factory=list)
     modes: list[str] = Field(default_factory=list)
-    default_mode: str = ""
-    setting: str = ""
+    default_mode: str | None = ""
+    setting: str | None = ""
 
 
 class SkillPayload(BaseModel):
@@ -659,9 +662,22 @@ class AppContext:
             task.add_done_callback(lambda t: self.pending_tasks.discard(t))
 
     def role_to_response(self, role: dict) -> dict:
+        def text(v):
+            return str(v) if v else ""
         return {
-            k: role.get(k)
-            for k in ["name", "avatar", "model", "thinking_mode", "thinking_strength", "thinking_custom", "temperature", "max_tokens", "skills", "modes", "default_mode", "setting", "has_avatar_file"]
+            "name": role.get("name", ""),
+            "avatar": text(role.get("avatar")),
+            "model": text(role.get("model")),
+            "thinking_mode": text(role.get("thinking_mode")),
+            "thinking_strength": text(role.get("thinking_strength")) or "medium",
+            "thinking_custom": text(role.get("thinking_custom")),
+            "temperature": role.get("temperature"),
+            "max_tokens": role.get("max_tokens"),
+            "skills": role.get("skills") or [],
+            "modes": role.get("modes") or [],
+            "default_mode": text(role.get("default_mode")),
+            "setting": str(role.get("setting") or ""),
+            "has_avatar_file": role.get("has_avatar_file", False),
         }
 
 
@@ -743,6 +759,126 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         except ValueError as e:
             raise HTTPException(400, str(e))
         return {"avatar": avatar}
+
+    def unique_role_name(name: str) -> str:
+        if not ctx.roles.get(name):
+            return name
+        i = 2
+        while ctx.roles.get(f"{name}{i}"):
+            i += 1
+        return f"{name}{i}"
+
+    def save_card_avatar(name: str, content: bytes):
+        if content.startswith(b"\x89PNG"):
+            try:
+                avatar = ctx.roles.save_avatar(name, "avatar.png", content)
+                ctx.roles.update(name, {"avatar": avatar})
+            except ValueError:
+                pass
+
+    @app.post("/api/roles/import-card")
+    async def import_card(file: UploadFile):
+        content = await file.read()
+        if not content:
+            raise HTTPException(400, "文件为空")
+        try:
+            card = parse_card(content)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        name = unique_role_name(card["name"] or "导入角色")
+        try:
+            role = ctx.roles.create({"name": name, "setting": card_to_setting(card)})
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        save_card_avatar(name, content)
+        return ctx.role_to_response(ctx.roles.get(name))
+
+    @app.post("/api/roles/import-cherry")
+    async def import_cherry(file: UploadFile):
+        content = await file.read()
+        if not content:
+            raise HTTPException(400, "文件为空")
+        try:
+            parsed = parse_assistant(content)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        name = unique_role_name(parsed["name"])
+        try:
+            role = ctx.roles.create({"name": name, "setting": parsed["setting"]})
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return ctx.role_to_response(role)
+
+    @app.post("/api/roles/import-native")
+    async def import_native(file: UploadFile):
+        content = await file.read()
+        if not content:
+            raise HTTPException(400, "文件为空")
+        try:
+            card = parse_card(content)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        ext = card.get("extensions") or {}
+        gt = ext.get("guantang") if isinstance(ext, dict) else None
+        if not isinstance(gt, dict):
+            raise HTTPException(400, "不是本框架导出的角色卡")
+        name = str(gt.get("name") or "").strip() or card["name"] or "导入角色"
+        name = unique_role_name(name)
+        data = {k: v for k, v in gt.items() if k in (
+            "avatar", "model", "thinking_mode", "thinking_strength", "thinking_custom",
+            "temperature", "max_tokens", "skills", "modes", "default_mode",
+        ) and v is not None}
+        data["name"] = name
+        data["setting"] = str(gt.get("setting") or "")
+        try:
+            role = ctx.roles.create(data)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        save_card_avatar(name, content)
+        return ctx.role_to_response(ctx.roles.get(name))
+
+    @app.get("/api/roles/{name}/export")
+    async def export_role(name: str):
+        role = ctx.roles.get(name)
+        if not role:
+            raise HTTPException(404, "角色不存在")
+        gt = {k: role.get(k) for k in (
+            "name", "avatar", "model", "thinking_mode", "thinking_strength", "thinking_custom",
+            "temperature", "max_tokens", "skills", "modes", "default_mode", "setting",
+        )}
+        card = {
+            "spec": "chara_card_v2",
+            "spec_version": "2.0",
+            "data": {
+                "name": role.get("name") or name,
+                "description": (role.get("setting") or "")[:200],
+                "personality": "",
+                "scenario": "",
+                "first_mes": "",
+                "mes_example": "",
+                "system_prompt": role.get("setting") or "",
+                "post_history_instructions": "",
+                "creator_notes": "",
+                "tags": [],
+                "creator": "",
+                "character_version": "",
+                "extensions": {"guantang": gt},
+            },
+        }
+        avatar_bytes = None
+        avatar = role.get("avatar") or ""
+        if role.get("has_avatar_file") and avatar:
+            try:
+                avatar_bytes = (ctx.roles.dir / name / avatar).read_bytes()
+            except OSError:
+                avatar_bytes = None
+        png = build_card_png(avatar_bytes, json.dumps(card, ensure_ascii=False))
+        encoded_name = url_quote(f"{name}.png")
+        return Response(
+            content=png,
+            media_type="image/png",
+            headers={"Content-Disposition": f"attachment; filename=\"card.png\"; filename*=UTF-8''{encoded_name}"},
+        )
 
     @app.get("/api/roles/{name}/system-prompt")
     async def role_system_prompt(name: str, mode: str = ""):
@@ -899,6 +1035,130 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     async def delete_session(session_id: int):
         ctx.storage.delete_session(session_id)
         return {"ok": True}
+
+    class SessionImportPayload(BaseModel):
+        session: dict = {}
+        messages: list[dict] = []
+
+    @app.get("/api/sessions/{session_id}/export")
+    async def export_session(session_id: int):
+        session = ctx.storage.get_session(session_id)
+        if not session:
+            raise HTTPException(404, "会话不存在")
+        data = {
+            "version": 1,
+            "session": {
+                "title": session.get("title", ""),
+                "character_name": session.get("character_name", ""),
+                "mode": session.get("mode", ""),
+                "workdirs": session.get("workdirs") or [],
+            },
+            "messages": ctx.storage.list_messages(session_id),
+        }
+        text = json.dumps(data, ensure_ascii=False)
+        return Response(
+            content=text,
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="session_{session_id}.json"'},
+        )
+
+    @app.post("/api/sessions/import")
+    async def import_session(payload: SessionImportPayload):
+        s = payload.session or {}
+        session = ctx.storage.create_session(s.get("character_name", ""), s.get("mode", ""))
+        ctx.storage.update_session(
+            session["id"],
+            title=s.get("title", ""),
+            workdirs=s.get("workdirs") or [],
+        )
+        id_map = {}
+        for m in payload.messages or []:
+            new = ctx.storage.add_message(
+                session["id"],
+                str(m.get("sender") or "player"),
+                str(m.get("content") or ""),
+                reasoning=str(m.get("reasoning") or ""),
+                tool_events=m.get("tool_events") or [],
+                character_name=str(m.get("character_name") or ""),
+                attachments=m.get("attachments") or [],
+                blocks=m.get("blocks") or [],
+                interrupted=bool(m.get("interrupted")),
+                created_at=m.get("created_at"),
+            )
+            if m.get("id") is not None:
+                id_map[m["id"]] = new["id"]
+        for m in payload.messages or []:
+            root = m.get("branch_root")
+            if root and m.get("id") is not None:
+                new_root = id_map.get(root)
+                new_id = id_map.get(m["id"])
+                if new_root and new_id:
+                    ctx.storage.update_message(
+                        session["id"], new_id,
+                        branch_id=int(m.get("branch_id") or 0),
+                        branch_root=new_root,
+                    )
+        return ctx.storage.get_session(session["id"])
+
+    @app.post("/api/sessions/import-chat")
+    async def import_silly_chat(file: UploadFile):
+        content = await file.read()
+        if not content:
+            raise HTTPException(400, "文件为空")
+        try:
+            data = json.loads(content.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise HTTPException(400, "酒馆聊天记录不是有效的 JSON")
+        chat = data.get("chat") or (data.get("history") or {}).get("visible") or []
+        if not isinstance(chat, list) or not chat:
+            raise HTTPException(400, "聊天记录为空")
+        char_name = ""
+        for m in chat:
+            if isinstance(m, dict) and not m.get("is_user") and m.get("name"):
+                char_name = str(m["name"])
+                break
+        role = ctx.roles.get(char_name) if char_name else None
+        character = char_name if role else ""
+        session = ctx.storage.create_session(character, "")
+        player_id = None
+        last_branch = 0
+        for m in chat:
+            if not isinstance(m, dict):
+                continue
+            is_user = bool(m.get("is_user"))
+            mes = str(m.get("mes") or "")
+            ts = m.get("send_date")
+            if isinstance(ts, (int, float)) and not isinstance(ts, bool):
+                ts = float(ts) if ts < 1e12 else float(ts) / 1000.0
+            else:
+                ts = None
+            if is_user:
+                if not mes:
+                    continue
+                msg = ctx.storage.add_message(session["id"], "player", mes, created_at=ts)
+                player_id = msg["id"]
+                last_branch = 0
+                continue
+            swipes = m.get("swipes") or []
+            variants = [mes] if mes else []
+            for s in swipes:
+                sv = str(s or "").strip()
+                if sv and sv != mes and sv not in variants:
+                    variants.append(sv)
+            if not variants:
+                continue
+            ctx.storage.add_message(
+                session["id"], "character", variants[0],
+                character_name=character, created_at=ts,
+            )
+            for v in variants[1:]:
+                last_branch += 1
+                ctx.storage.add_message(
+                    session["id"], "character", v,
+                    character_name=character, created_at=ts,
+                    branch_id=last_branch, branch_root=player_id or 0,
+                )
+        return {"session": ctx.storage.get_session(session["id"]), "roles_match": bool(role)}
 
     @app.get("/api/sessions/{session_id}/messages")
     async def list_messages(session_id: int):
@@ -1117,6 +1377,129 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             )
         cfg.save()
         return {"player": cfg.player(), "ui": cfg.ui(), "multimodal": cfg.multimodal(), "auto_title": cfg.auto_title()}
+
+    @app.get("/api/settings/export")
+    async def export_settings():
+        roles = []
+        for r in ctx.roles.list():
+            item = {k: r.get(k) for k in (
+                "name", "avatar", "model", "thinking_mode", "thinking_strength", "thinking_custom",
+                "temperature", "max_tokens", "skills", "modes", "default_mode", "setting",
+            )}
+            avatar = r.get("avatar") or ""
+            if r.get("has_avatar_file") and avatar:
+                try:
+                    item["avatar_base64"] = base64.b64encode(
+                        (ctx.roles.dir / r["name"] / avatar).read_bytes()
+                    ).decode("ascii")
+                except OSError:
+                    pass
+            roles.append(item)
+        player_avatar = cfg.player().get("avatar") or ""
+        player_avatar_base64 = None
+        if player_avatar:
+            p = cfg.root / "data" / "avatar" / player_avatar
+            if p.is_file():
+                try:
+                    player_avatar_base64 = base64.b64encode(p.read_bytes()).decode("ascii")
+                except OSError:
+                    pass
+        data = {
+            "version": 1,
+            "config": cfg.data,
+            "models": ctx.models.list(),
+            "skills": ctx.skills.list(),
+            "modes": ctx.modes.list(),
+            "roles": roles,
+            "builtin_tools": ctx.builtin_tools_text(),
+            "approval_reject_text": ctx.approval_reject_text(),
+            "player_avatar": player_avatar_base64,
+        }
+        return Response(
+            content=json.dumps(data, ensure_ascii=False),
+            media_type="application/json",
+            headers={"Content-Disposition": 'attachment; filename="guantang_settings.json"'},
+        )
+
+    class SettingsImportPayload(BaseModel):
+        config: dict | None = None
+        models: list[dict] | None = None
+        skills: list[dict] | None = None
+        modes: list[dict] | None = None
+        roles: list[dict] | None = None
+        builtin_tools: str | None = None
+        approval_reject_text: str | None = None
+        player_avatar: str | None = None
+
+    @app.post("/api/settings/import")
+    async def import_settings(payload: SettingsImportPayload):
+        covered = []
+        if payload.config is not None:
+            cfg.data = dict(payload.config)
+            cfg.save()
+            covered.append("全局配置")
+        if payload.models is not None:
+            for m in payload.models:
+                if isinstance(m, dict) and m.get("name"):
+                    ctx.models.upsert(m)
+            covered.append("模型配置")
+        if payload.skills is not None:
+            for s in payload.skills:
+                if isinstance(s, dict) and s.get("name"):
+                    ctx.skills.upsert(s)
+            covered.append("技能")
+        if payload.modes is not None:
+            for m in payload.modes:
+                if isinstance(m, dict) and m.get("name"):
+                    ctx.modes.upsert(m)
+            covered.append("模式")
+        if payload.roles is not None:
+            for r in payload.roles:
+                if not isinstance(r, dict) or not r.get("name"):
+                    continue
+                name = r["name"]
+                data = {k: r.get(k) for k in (
+                    "name", "model", "thinking_mode", "thinking_strength", "thinking_custom",
+                    "temperature", "max_tokens", "skills", "modes", "default_mode",
+                ) if r.get(k) is not None}
+                data["name"] = name
+                data["setting"] = str(r.get("setting") or "")
+                try:
+                    ctx.roles.create(data)
+                except ValueError:
+                    continue
+                avatar_b64 = r.get("avatar_base64")
+                if avatar_b64:
+                    try:
+                        content = base64.b64decode(avatar_b64)
+                        avatar = ctx.roles.save_avatar(name, "avatar.png", content)
+                        ctx.roles.update(name, {"avatar": avatar})
+                    except (ValueError, OSError):
+                        pass
+            covered.append("角色")
+        if payload.builtin_tools is not None:
+            try:
+                defs = parse_tools(payload.builtin_tools)
+            except Exception as e:
+                raise HTTPException(400, f"内置工具配置格式错误：{e}")
+            if defs:
+                path = ctx.builtin_tools_file()
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(payload.builtin_tools, encoding="utf-8")
+                covered.append("内置工具")
+        if payload.player_avatar:
+            try:
+                content = base64.b64decode(payload.player_avatar)
+                avatar_dir = cfg.root / "data" / "avatar"
+                avatar_dir.mkdir(parents=True, exist_ok=True)
+                avatar_name = f"p-{int(time.time())}.png"
+                (avatar_dir / avatar_name).write_bytes(content)
+                cfg.set_player(avatar=avatar_name)
+                cfg.save()
+                covered.append("玩家头像")
+            except (ValueError, OSError):
+                pass
+        return {"ok": True, "covered": covered}
 
     @app.websocket("/ws/chat")
     async def ws_chat(ws: WebSocket):

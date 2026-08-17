@@ -9,6 +9,11 @@
       const playerAvatarFile = ref(null)
       const builtinTools = ref([])
       const approvalRejectText = ref('')
+      const settingsFile = ref(null)
+      const importConfirm = ref(null)
+      const importSummary = ref(null)
+      const importStep2Open = ref(false)
+      const importKeyword = ref('')
 
       async function loadBuiltinTools() {
         try {
@@ -116,7 +121,54 @@
         }
       }
 
-      return { store, playerName, playerAvatar, playerAvatarFile, savePlayer, saveMultimodal, saveAutoTitle, uploadPlayerAvatar, onPlayerAvatarFile, builtinTools, approvalRejectText, addParam, removeParam, saveBuiltinTools, applyTheme: store.applyTheme, saveUi: store.saveUi }
+      async function exportSettings() {
+        try {
+          await api.download('/api/settings/export', 'guantang_settings.json')
+          store.notify('已导出全局设置', 'ok')
+        } catch (e) {
+          store.notify(e.message)
+        }
+      }
+
+      async function onSettingsFile(e) {
+        const file = e.target.files[0]
+        e.target.value = ''
+        if (!file) return
+        try {
+          const data = JSON.parse(await file.text())
+          importConfirm.value = data
+          importSummary.value = {
+            config: !!data.config,
+            models: Array.isArray(data.models) ? data.models.length : 0,
+            skills: Array.isArray(data.skills) ? data.skills.length : 0,
+            modes: Array.isArray(data.modes) ? data.modes.length : 0,
+            roles: Array.isArray(data.roles) ? data.roles.length : 0,
+            builtin_tools: !!data.builtin_tools,
+            player_avatar: !!data.player_avatar,
+          }
+          importKeyword.value = ''
+        } catch (err) {
+          store.notify('文件不是有效的全局设置 JSON')
+        }
+      }
+
+      function importStep2() {
+        importStep2Open.value = true
+      }
+
+      async function doImportSettings() {
+        try {
+          const res = await api.post('/api/settings/import', importConfirm.value)
+          store.notify('已导入：' + (res.covered || []).join('、'), 'ok')
+          await store.loadState()
+          importConfirm.value = null
+          importStep2Open.value = false
+        } catch (e) {
+          store.notify(e.message)
+        }
+      }
+
+      return { store, playerName, playerAvatar, playerAvatarFile, savePlayer, saveMultimodal, saveAutoTitle, uploadPlayerAvatar, onPlayerAvatarFile, builtinTools, approvalRejectText, addParam, removeParam, saveBuiltinTools, applyTheme: store.applyTheme, saveUi: store.saveUi, settingsFile, importConfirm, importSummary, importStep2Open, importKeyword, exportSettings, onSettingsFile, importStep2, doImportSettings }
     },
   }
 

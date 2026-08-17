@@ -153,8 +153,10 @@ class Storage:
         interrupted: bool = False,
         branch_id: int = 0,
         branch_root: int = 0,
+        created_at: float | None = None,
     ) -> dict:
         now = _now()
+        ts = float(created_at) if created_at else now
         with self._conn() as conn:
             cur = conn.execute(
                 "INSERT INTO messages (session_id, sender, character_name, content, reasoning, tool_events, attachments, blocks, interrupted, branch_id, branch_root, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -170,7 +172,7 @@ class Storage:
                     1 if interrupted else 0,
                     branch_id,
                     branch_root,
-                    now,
+                    ts,
                 ),
             )
             conn.execute("UPDATE sessions SET updated_at = ? WHERE id = ?", (now, session_id))
