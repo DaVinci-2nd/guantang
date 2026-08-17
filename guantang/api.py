@@ -258,7 +258,7 @@ class AppContext:
             return None
         set_context(session_id=msg.get("session_id"), role="图片识别", model=mm.get("model", ""), purpose="recognize")
 
-        def mark_and_save(extra_text: str):
+        async def mark_and_save(extra_text: str):
             attachments = list(msg.get("attachments") or [])
             for att in attachments:
                 if att.get("kind") == "image" and not att.get("recognized"):
@@ -266,14 +266,15 @@ class AppContext:
             content = (msg.get("content") or "")
             if extra_text:
                 content = content + "\n\n" + extra_text
-            self.storage.update_message(
-                msg["session_id"], msg["id"], content=content, attachments=attachments
+            await asyncio.to_thread(
+                self.storage.update_message,
+                msg["session_id"], msg["id"], content=content, attachments=attachments,
             )
             return msg["id"]
 
         model_def = self.models.get(mm["model"]) if mm.get("model") else None
         if not model_def or not mm.get("prompt"):
-            return mark_and_save("")
+            return await mark_and_save("")
         descriptions = []
         for att in images:
             url = att.get("url") or ""
@@ -313,7 +314,7 @@ class AppContext:
                 descriptions.append(f"【图片：{att.get('name', '图片')}】图片识别失败，无法获取描述")
             finally:
                 await provider.close()
-        return mark_and_save("\n\n".join(descriptions))
+        return await mark_and_save("\n\n".join(descriptions))
 
     def build_session_turn_text(self, messages: list[dict], rounds: int | None = None) -> str:
         lines = []
@@ -357,7 +358,7 @@ class AppContext:
                     rounds = 9
                 text = self.build_session_turn_text(messages, rounds)
             if not text:
-                self.storage.update_session(session_id, title_set=1)
+                await asyncio.to_thread(self.storage.update_session, session_id, title_set=1)
                 return
             provider = build_provider(
                 model_def,
@@ -378,7 +379,7 @@ class AppContext:
             finally:
                 await provider.close()
             title = title.strip().replace("\n", " ")[:50]
-            self.storage.update_session(session_id, title=title, title_set=1)
+            await asyncio.to_thread(self.storage.update_session, session_id, title=title, title_set=1)
             if ws is not None:
                 try:
                     await ws.send_json({"type": "title", "title": title, "session_id": session_id})
@@ -956,23 +957,30 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 blocks = []
                 text_buf = ""
                 reasoning_buf = ""
+                ai_msg = await asyncio.to_thread(
+                    ctx.storage.add_message,
+                    session_id, "character", "", "", [], character_name=role["name"], blocks=[], interrupted=True,
+                )
+                ai_id = ai_msg["id"]
+                flush_count = 0
 
-                def save_interrupted():
+                def current_blocks():
+                    b = list(blocks)
                     if reasoning_buf:
-                        blocks.append({"type": "reasoning", "text": reasoning_buf})
+                        b.append({"type": "reasoning", "text": reasoning_buf})
                     if text_buf:
-                        blocks.append({"type": "text", "text": text_buf})
-                    if reply or reasoning or tool_events or blocks:
-                        ctx.storage.add_message(
-                            session_id,
-                            "character",
-                            reply,
-                            reasoning,
-                            tool_events,
-                            character_name=role["name"],
-                            blocks=blocks,
-                            interrupted=True,
-                        )
+                        b.append({"type": "text", "text": text_buf})
+                    return b
+
+                async def persist(interrupted):
+                    await asyncio.to_thread(
+                        ctx.storage.update_message,
+                        session_id, ai_id, content=reply, blocks=current_blocks(), interrupted=interrupted,
+                    )
+
+                async def finalize(interrupted):
+                    await persist(interrupted)
+                    return await asyncio.to_thread(ctx.storage.get_message, session_id, ai_id)
 
                 try:
                     async for event in ctx.engine.run_messages(system, history, thinking=thinking):
@@ -1017,20 +1025,19 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                                     blk["result"] = event[2]
                                     break
                             await ws.send_json({"type": "tool_result", "name": event[1], "text": event[2][:800]})
+                        flush_count += 1
+                        if flush_count % 20 == 0:
+                            await persist(True)
                 except ProviderError as e:
+                    await persist(True)
                     try:
                         await ws.send_json({"type": "error", "text": str(e)})
                     except WebSocketDisconnect:
                         pass
-                    save_interrupted()
                     ctx.storage.update_session(session_id, workdirs=workdirs)
                     ctx.maybe_auto_title(session_id)
                     continue
                 except ApprovalStopped as e:
-                    if reasoning_buf:
-                        blocks.append({"type": "reasoning", "text": reasoning_buf})
-                    if text_buf:
-                        blocks.append({"type": "text", "text": text_buf})
                     for te in tool_events:
                         if te["name"] == e.name and not te.get("result"):
                             te["result"] = REJECT_STOP_TEXT
@@ -1040,16 +1047,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                             blk["result"] = REJECT_STOP_TEXT
                             break
                     ctx.storage.update_session(session_id, workdirs=workdirs)
-                    saved = ctx.storage.add_message(
-                        session_id,
-                        "character",
-                        reply,
-                        reasoning,
-                        tool_events,
-                        character_name=role["name"],
-                        blocks=blocks,
-                        interrupted=True,
-                    )
+                    saved = await finalize(True)
                     ctx.maybe_auto_title(session_id)
                     try:
                         await ws.send_json({"type": "end", "message": saved, "interrupted": True})
@@ -1057,7 +1055,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                         pass
                     continue
                 except WebSocketDisconnect:
-                    save_interrupted()
+                    await persist(True)
                     ctx.storage.update_session(session_id, workdirs=workdirs)
                     ctx.maybe_auto_title(session_id)
                     raise
@@ -1066,7 +1064,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
                     traceback.print_exc()
                     send_log.record_error(session_id, f"处理出错：{type(e).__name__}: {e}")
-                    save_interrupted()
+                    await persist(True)
                     ctx.storage.update_session(session_id, workdirs=workdirs)
                     ctx.maybe_auto_title(session_id)
                     try:
@@ -1074,13 +1072,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                     except WebSocketDisconnect:
                         pass
                     continue
-                if reasoning_buf:
-                    blocks.append({"type": "reasoning", "text": reasoning_buf})
-                if text_buf:
-                    blocks.append({"type": "text", "text": text_buf})
-                saved = ctx.storage.add_message(
-                    session_id, "character", reply, reasoning, tool_events, character_name=role["name"], blocks=blocks
-                )
+                saved = await finalize(False)
                 ctx.storage.update_session(session_id, workdirs=workdirs)
                 ctx.maybe_auto_title(session_id, ws)
                 await ws.send_json({"type": "end", "message": saved})

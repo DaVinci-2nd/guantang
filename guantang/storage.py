@@ -46,6 +46,7 @@ class Storage:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("PRAGMA busy_timeout=5000")
         return conn
 
     def _init(self):
@@ -163,7 +164,7 @@ class Storage:
             row = conn.execute("SELECT * FROM messages WHERE id = ?", (cur.lastrowid,)).fetchone()
             return self._row_to_message(row)
 
-    def update_message(self, session_id: int, message_id: int, content: str | None = None, blocks: list | None = None, attachments: list | None = None) -> dict | None:
+    def update_message(self, session_id: int, message_id: int, content: str | None = None, blocks: list | None = None, attachments: list | None = None, interrupted: bool | None = None) -> dict | None:
         fields = []
         values = []
         if content is not None:
@@ -175,6 +176,9 @@ class Storage:
         if attachments is not None:
             fields.append("attachments = ?")
             values.append(json.dumps(attachments, ensure_ascii=False))
+        if interrupted is not None:
+            fields.append("interrupted = ?")
+            values.append(1 if interrupted else 0)
         if not fields:
             return self.get_message(session_id, message_id)
         values.append(message_id)
