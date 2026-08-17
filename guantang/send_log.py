@@ -113,6 +113,28 @@ class SendLog:
                 continue
         return result
 
+    def record_output(self, session_id, output: dict):
+        if not self.db_path:
+            return
+        conn = sqlite3.connect(self.db_path)
+        rows = conn.execute(
+            "SELECT id, entry FROM send_log WHERE session_id=? ORDER BY id DESC LIMIT 1",
+            (session_id,),
+        ).fetchall()
+        if rows:
+            try:
+                entry = json.loads(rows[0][1])
+            except (json.JSONDecodeError, TypeError):
+                entry = None
+            if entry and (entry.get("context") or {}).get("purpose") == "chat" and entry.get("request"):
+                entry["output"] = output
+                conn.execute(
+                    "UPDATE send_log SET entry=? WHERE id=?",
+                    (json.dumps(entry, ensure_ascii=False), rows[0][0]),
+                )
+        conn.commit()
+        conn.close()
+
     def record_error(self, session_id, message: str):
         if not self.db_path:
             return

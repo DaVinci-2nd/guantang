@@ -78,7 +78,16 @@
     const s = currentSession()
     if (!s) { store.messages = []; return }
     const msgs = await api.get(`/api/sessions/${id}/messages`)
-    const list = msgs.map((m) => ({ ...m, key: 'h' + m.id }))
+    const list = msgs.map((m, i) => ({
+      ...m,
+      key: 'h' + (m.id || 'r' + i),
+      content: m.content || '',
+      reasoning: m.reasoning || '',
+      blocks: Array.isArray(m.blocks) ? m.blocks : [],
+      tool_events: Array.isArray(m.tool_events) ? m.tool_events : [],
+      attachments: Array.isArray(m.attachments) ? m.attachments : [],
+      interrupted: !!m.interrupted,
+    }))
     const pending = store.streamingMsgs[id]
     if (pending) list.push(pending)
     store.messages = list

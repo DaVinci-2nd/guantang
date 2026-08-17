@@ -31,6 +31,132 @@ from .zh_translator import ZhTranslator
 REJECT_STOP_TEXT = "此操作已被手动拒绝，对话已中断。"
 
 
+def _msg_content_text(content) -> str:
+    if isinstance(content, list):
+        return "".join(
+            p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"
+        )
+    return str(content or "")
+
+
+def restore_messages_from_log(entries: list[dict]) -> list[dict]:
+    restored = []
+    seen = set()
+    for entry in reversed(entries):
+        if (entry.get("context") or {}).get("purpose") != "chat":
+            continue
+        msgs = (entry.get("request") or {}).get("messages") or []
+        for m in msgs:
+            role = m.get("role")
+            if role == "system":
+                continue
+            if role == "user":
+                content = _msg_content_text(m.get("content")).strip()
+                if not content:
+                    continue
+                sig = ("u", content)
+                if sig in seen:
+                    continue
+                seen.add(sig)
+                restored.append({"sender": "player", "content": content, "created_at": entry.get("ts", 0), "_sig": sig})
+        output = entry.get("output")
+        if output:
+            blocks = output.get("blocks") or []
+            content = output.get("text") or ""
+            reasoning = output.get("reasoning") or ""
+            if not (content or reasoning or blocks):
+                continue
+            sig = ("a", json.dumps(blocks, ensure_ascii=False, sort_keys=True))
+            if sig in seen:
+                continue
+            seen.add(sig)
+            restored.append({
+                "sender": "character",
+                "character_name": "",
+                "content": content,
+                "reasoning": reasoning,
+                "blocks": blocks,
+                "interrupted": False,
+                "created_at": entry.get("ts", 0),
+                "_sig": sig,
+            })
+            continue
+        pending_tool_blocks = None
+        for m in msgs:
+            role = m.get("role")
+            if role == "assistant":
+                content = m.get("content") or ""
+                reasoning = m.get("reasoning_content") or ""
+                tool_calls = m.get("tool_calls") or []
+                blocks = []
+                if reasoning:
+                    blocks.append({"type": "reasoning", "text": reasoning})
+                if content:
+                    blocks.append({"type": "text", "text": content})
+                for tc in tool_calls:
+                    fn = tc.get("function") or {}
+                    try:
+                        args = json.loads(fn.get("arguments") or "{}")
+                    except (json.JSONDecodeError, TypeError):
+                        args = {"_raw": fn.get("arguments")}
+                    blocks.append({"type": "tool", "name": fn.get("name", ""), "arguments": args, "result": ""})
+                sig = ("a", json.dumps(blocks, ensure_ascii=False, sort_keys=True))
+                if sig in seen:
+                    pending_tool_blocks = None
+                    continue
+                seen.add(sig)
+                restored.append({
+                    "sender": "character",
+                    "character_name": "",
+                    "content": content,
+                    "reasoning": reasoning,
+                    "blocks": blocks,
+                    "interrupted": False,
+                    "created_at": entry.get("ts", 0),
+                    "_sig": sig,
+                })
+                pending_tool_blocks = blocks
+            elif role == "tool" and pending_tool_blocks is not None:
+                tb = next(
+                    (b for b in reversed(pending_tool_blocks)
+                     if b.get("type") == "tool" and b.get("name") == m.get("name") and not b.get("result")),
+                    None,
+                )
+                if tb is not None:
+                    tb["result"] = m.get("content") or ""
+    return restored
+
+
+def merge_messages(storage_msgs: list[dict], restored: list[dict]) -> list[dict]:
+    storage_by_key = {}
+    for m in storage_msgs:
+        key = ("u", (m.get("content") or "").strip()) if m["sender"] == "player" else (
+            "a", json.dumps(m.get("blocks") or [], ensure_ascii=False, sort_keys=True)
+        )
+        storage_by_key.setdefault(key, []).append(m)
+    result = []
+    seen = set()
+    for r in restored:
+        sig = r.get("_sig")
+        if sig in seen:
+            continue
+        seen.add(sig)
+        sm = storage_by_key.get(sig)
+        if sm:
+            result.append(sm[0])
+        else:
+            result.append({k: v for k, v in r.items() if k != "_sig"})
+    for m in storage_msgs:
+        key = ("u", (m.get("content") or "").strip()) if m["sender"] == "player" else (
+            "a", json.dumps(m.get("blocks") or [], ensure_ascii=False, sort_keys=True)
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(m)
+    return result
+
+
 def validate_replace_rules(rules: list[dict]):
     import re
 
@@ -641,7 +767,11 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     async def list_messages(session_id: int):
         if not ctx.storage.get_session(session_id):
             raise HTTPException(404, "会话不存在")
-        return ctx.storage.list_messages(session_id)
+        msgs = ctx.storage.list_messages(session_id)
+        restored = restore_messages_from_log(send_log.for_session(session_id))
+        if not restored:
+            return msgs
+        return merge_messages(msgs, restored)
 
     @app.post("/api/sessions/{session_id}/messages")
     async def add_message(session_id: int, payload: MessagePayload):
@@ -972,10 +1102,20 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                         b.append({"type": "text", "text": text_buf})
                     return b
 
+                def build_output():
+                    return {
+                        "reasoning": reasoning,
+                        "text": reply,
+                        "tool_events": tool_events,
+                        "blocks": current_blocks(),
+                    }
+
                 async def persist(interrupted):
+                    output = build_output()
+                    send_log.record_output(session_id, output)
                     await asyncio.to_thread(
                         ctx.storage.update_message,
-                        session_id, ai_id, content=reply, blocks=current_blocks(), interrupted=interrupted,
+                        session_id, ai_id, content=output["text"], blocks=output["blocks"], interrupted=interrupted,
                     )
 
                 async def finalize(interrupted):
