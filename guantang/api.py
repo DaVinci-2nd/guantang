@@ -365,12 +365,48 @@ class AppContext:
         for m in messages:
             if m["sender"] == "player":
                 result.append({"role": "user", "content": self.build_message_content(m)})
-            else:
-                msg = {"role": "assistant", "content": m["content"]}
-                if m.get("reasoning"):
-                    msg["reasoning_content"] = m["reasoning"]
+                continue
+            content = m.get("content") or ""
+            reasoning = m.get("reasoning") or ""
+            blocks = m.get("blocks") or []
+            tool_blocks = [b for b in blocks if b.get("type") == "tool"]
+            if not tool_blocks:
+                msg = {"role": "assistant", "content": content}
+                if reasoning:
+                    msg["reasoning_content"] = reasoning
                 result.append(msg)
+                continue
+            base = m.get("id") or round(float(m.get("created_at") or 0), 3)
+            tool_calls = []
+            for i, tb in enumerate(tool_blocks):
+                try:
+                    args = json.dumps(tb.get("arguments") or {}, ensure_ascii=False)
+                except (TypeError, ValueError):
+                    args = "{}"
+                tool_calls.append({
+                    "id": f"call_{base}_{i}",
+                    "type": "function",
+                    "function": {"name": tb.get("name", ""), "arguments": args},
+                })
+            assistant = {"role": "assistant", "content": content or None, "tool_calls": tool_calls}
+            if reasoning:
+                assistant["reasoning_content"] = reasoning
+            result.append(assistant)
+            for i, tb in enumerate(tool_blocks):
+                result.append({
+                    "role": "tool",
+                    "tool_call_id": f"call_{base}_{i}",
+                    "name": tb.get("name", ""),
+                    "content": tb.get("result") or "",
+                })
         return result
+
+    def messages_with_restored(self, session_id: int) -> list[dict]:
+        msgs = self.storage.list_messages(session_id)
+        restored = restore_messages_from_log(send_log.for_session(session_id))
+        if not restored:
+            return msgs
+        return merge_messages(msgs, restored)
 
     async def recognize_message_images(self, msg: dict) -> str | None:
         mm = self.cfg.multimodal()
@@ -809,7 +845,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             raise HTTPException(404, "会话不存在")
         session, role, model_def = ctx.session_context(session_id)
         system = ctx.build_system(session, role, model_def)
-        messages = ctx.history_to_openai(ctx.storage.list_messages(session_id))
+        messages = ctx.history_to_openai(ctx.messages_with_restored(session_id))
         if message:
             messages.append({"role": "user", "content": message})
         return {"system": system, "messages": messages}
@@ -1051,7 +1087,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 )
                 super_messages = data.get("super_messages")
                 use_super = bool(super_messages)
-                history_messages = ctx.storage.list_messages(session_id)
+                history_messages = ctx.messages_with_restored(session_id)
                 if use_super:
                     system_parts = [m.get("content", "") for m in super_messages if m.get("role") == "system"]
                     super_system = "\n\n".join(p for p in system_parts if p)
@@ -1074,7 +1110,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                         recognized_id = await ctx.recognize_message_images(history_messages[-1])
                         if recognized_id:
                             updated = ctx.storage.get_message(session_id, recognized_id)
-                            history_messages = ctx.storage.list_messages(session_id)
+                            history_messages = ctx.messages_with_restored(session_id)
                             try:
                                 await ws.send_json({"type": "recognized", "message": updated})
                             except WebSocketDisconnect:
