@@ -128,7 +128,15 @@
     data() {
       return { showTools: false }
     },
+    computed: {
+      branchInfo() {
+        return store.branchOf(this.msg)
+      },
+    },
     methods: {
+      switchBranch(dir) {
+        store.applyBranch(this.msg, dir)
+      },
       bubbleBlocks(msg) {
         if (msg.blocks && msg.blocks.length) return msg.blocks
         const blocks = []

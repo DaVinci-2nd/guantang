@@ -15,9 +15,12 @@
       const editBlocks = ref(null)
       const debugData = ref(null)
       const previewTarget = ref(null)
+      const selectedBranch = ref(null)
       const editorDirty = ref(false)
       const editingAtts = ref([])
       const superData = ref(null)
+
+      const visibleMessages = computed(() => store.computeVisibleMessages())
 
       const filteredSessions = computed(() => {
         if (store.filterCharacter === '全部') return store.sessions
@@ -344,6 +347,10 @@
         const sid = sessionId || store.currentSessionId
         if (!sid) return
         const isSuper = !!superMessages
+        let branchRoot = null
+        if (!regenerateFrom && !isSuper) {
+          branchRoot = store.lastNonLatestRoot()
+        }
         store.streaming = true
         if (persistPlayer && !isSuper) {
           let saved
@@ -487,6 +494,10 @@
             if (store.streamingMsgs[sid] === aiMsg) delete store.streamingMsgs[sid]
             ws.close()
             store.loadSessions().catch(() => {})
+            store.refreshBranches(branchRoot || regenerateFrom || null).catch(() => {})
+            api.get(`/api/sessions/${sid}/messages`).then((msgs) => {
+              store.messages = store.normalizeMessages(msgs)
+            }).catch(() => {})
             scrollBottom()
           }
         }
@@ -512,6 +523,8 @@
           const payload = { session_id: sid, message: content }
           if (regenerateFrom) payload.regenerate_from = regenerateFrom
           if (isSuper) payload.super_messages = superMessages
+          const bChoices = store.branchChoices
+          if (bChoices && Object.keys(bChoices).length) payload.branch_choices = { ...bChoices }
           ws.send(JSON.stringify(payload))
         }
       }
@@ -586,8 +599,6 @@
         if (!player || store.streaming) return
         const sid = store.currentSessionId
         if (!sid) return
-        const idx = store.messages.findIndex((m) => m.key === player.key)
-        store.messages = store.messages.slice(0, idx + 1)
         await sendContent(player.content, player.attachments || [], sid, false, null, player.id)
       }
 
@@ -646,8 +657,6 @@
           editTarget.value = null
           if (sendAfter) {
             const player = msg
-            const idx = store.messages.findIndex((m) => m.key === player.key)
-            store.messages = store.messages.slice(0, idx + 1)
             await sendContent(player.content, player.attachments || [], sid, false, null, player.id)
           }
           return
@@ -694,9 +703,44 @@
         try {
           debugData.value = await api.get(`/api/sessions/${sid}/debug`)
           if (debugData.value.send_log) debugData.value.send_log.forEach((s) => { s.open = true })
+          selectedBranch.value = null
         } catch (e) {
           store.notify(e.message)
         }
+      }
+
+      function selectBranch(node, b) {
+        const ids = (node.branches || []).map((x) => x.branch_id).sort((a, b) => a - b)
+        const n = ids.indexOf(b.branch_id) + 1
+        const msgs = b.messages || []
+        selectedBranch.value = {
+          root: node.message.id,
+          branch_id: b.branch_id,
+          label: `分支 ${n}（${msgs.length} 条消息）`,
+          rootMsg: node.message,
+          messages: msgs,
+        }
+      }
+
+      function branchLabel(node, b) {
+        const ids = (node.branches || []).map((x) => x.branch_id).sort((a, b) => a - b)
+        return ids.indexOf(b.branch_id) + 1
+      }
+
+      function branchSummary(node, b) {
+        const msgs = b.messages || []
+        const t = msgs.find((m) => m.sender === 'character' && (m.content || m.reasoning))
+        if (t) return ((t.content || t.reasoning || '') || '').slice(0, 24)
+        return ''
+      }
+
+      function isSelectedBranch(node, b) {
+        return !!selectedBranch.value && selectedBranch.value.root === node.message.id && selectedBranch.value.branch_id === b.branch_id
+      }
+
+      function branchMsgKind(m) {
+        if (m.sender === 'player') return '玩家'
+        return m.character_name || '角色'
       }
 
       function debugJson(value) {
@@ -723,17 +767,19 @@
         await store.saveUi()
       }
 
-      watch(() => store.messages, (nv, ov) => {
+      watch(visibleMessages, (nv, ov) => {
         if (nv !== ov) scrollBottom(true)
       })
 
       return {
         store, chatList, editorEl, fileInput, filteredSessions, modeOptions, filterOptions,
+        visibleMessages,
         currentRole, currentSession, newSession, deleteCurrentSession, formatTime,
         renderMarkdown, onModeChange, send, onFiles, toggleCentered, canSend,
         abortStream, regenerate, editTarget, editText, editBlocks, openEdit, closeEdit, saveEdit,
         blockTypeName, moveBlock, onApprove,
         debugData, showDebug, debugJson, previewTarget, openPreview,
+        selectedBranch, selectBranch, branchLabel, branchSummary, isSelectedBranch, branchMsgKind,
         onEditorKeydown, onEditorPaste, onEditorInput: markDirty,
         superData, superSend, addSuperRow, removeSuperRow, superRoleName, submitSuper, onSendClick,
       }

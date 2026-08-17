@@ -27,12 +27,27 @@
     activeWs: null,
     activeAiMsg: null,
     streamingMsgs: {},
+    branchTree: [],
+    branchChoices: {},
     toast: { text: '', kind: '' },
   })
 
   function notify(text, kind = 'error') {
     store.toast = { text, kind }
     setTimeout(() => { store.toast = { text: '', kind: '' } }, 4000)
+  }
+
+  function normalizeMessages(msgs) {
+    return msgs.map((m, i) => ({
+      ...m,
+      key: 'h' + (m.id || 'r' + i),
+      content: m.content || '',
+      reasoning: m.reasoning || '',
+      blocks: Array.isArray(m.blocks) ? m.blocks : [],
+      tool_events: Array.isArray(m.tool_events) ? m.tool_events : [],
+      attachments: Array.isArray(m.attachments) ? m.attachments : [],
+      interrupted: !!m.interrupted,
+    }))
   }
 
   async function loadState() {
@@ -73,24 +88,137 @@
     return store.roles.find((r) => r.name === s.character_name) || null
   }
 
+  function computeVisibleMessages() {
+    const msgs = store.messages
+    const choices = store.branchChoices || {}
+    const roots = [...new Set(msgs.map((m) => m.branch_root || 0).filter((r) => r))].sort((a, b) => a - b)
+    const picks = {}
+    const maxBranch = {}
+    for (const r of roots) {
+      const bs = msgs.filter((m) => (m.branch_root || 0) === r).map((m) => m.branch_id).sort((a, b) => a - b)
+      maxBranch[r] = bs.length ? bs[bs.length - 1] : 0
+      const pick = choices[r]
+      picks[r] = bs.includes(pick) ? pick : maxBranch[r]
+    }
+    let cutRoot = null
+    for (const r of roots) {
+      if (picks[r] !== maxBranch[r]) { cutRoot = r; break }
+    }
+    if (cutRoot == null) {
+      return msgs.filter((m) => {
+        const root = m.branch_root || 0
+        if (!root) return true
+        return picks[root] === m.branch_id
+      })
+    }
+    let cutTime = null
+    for (const m of msgs) {
+      if ((m.branch_root || 0) === cutRoot) {
+        const ct = m.created_at || 0
+        if (cutTime == null || ct < cutTime) cutTime = ct
+      }
+    }
+    if (cutTime == null) cutTime = 0
+    return msgs.filter((m) => {
+      const root = m.branch_root || 0
+      if (root === cutRoot) return m.branch_id === picks[cutRoot]
+      if ((m.created_at || 0) > cutTime) return false
+      if (!root) return true
+      return picks[root] === m.branch_id
+    })
+  }
+
   async function selectSession(id) {
     store.currentSessionId = id
     const s = currentSession()
-    if (!s) { store.messages = []; return }
+    if (!s) { store.messages = []; store.branchTree = []; store.branchChoices = {}; return }
     const msgs = await api.get(`/api/sessions/${id}/messages`)
-    const list = msgs.map((m, i) => ({
-      ...m,
-      key: 'h' + (m.id || 'r' + i),
-      content: m.content || '',
-      reasoning: m.reasoning || '',
-      blocks: Array.isArray(m.blocks) ? m.blocks : [],
-      tool_events: Array.isArray(m.tool_events) ? m.tool_events : [],
-      attachments: Array.isArray(m.attachments) ? m.attachments : [],
-      interrupted: !!m.interrupted,
-    }))
+    const list = normalizeMessages(msgs)
     const pending = store.streamingMsgs[id]
     if (pending) list.push(pending)
     store.messages = list
+    await loadBranches()
+  }
+
+  function branchNodeFor(id) {
+    return store.branchTree.find((n) => n.message.id === id) || null
+  }
+
+  function branchIdsOf(node) {
+    if (!node || !node.branches) return []
+    return node.branches.map((b) => b.branch_id).sort((a, b) => a - b)
+  }
+
+  function branchOf(msg) {
+    if (!msg || msg.sender !== 'player' || !msg.id) return null
+    const node = branchNodeFor(msg.id)
+    const ids = branchIdsOf(node)
+    if (ids.length < 2) return null
+    const cur = store.branchChoices[msg.id] !== undefined ? store.branchChoices[msg.id] : ids[ids.length - 1]
+    const idx = ids.indexOf(cur)
+    return { index: idx + 1, total: ids.length }
+  }
+
+  function lastNonLatestRoot() {
+    let last = null
+    for (const node of store.branchTree) {
+      const rid = node.message.id
+      if (rid == null) continue
+      const ids = branchIdsOf(node)
+      if (ids.length < 2) continue
+      const cur = store.branchChoices[rid]
+      if (cur !== undefined && cur !== ids[ids.length - 1]) last = rid
+    }
+    return last
+  }
+
+  async function loadBranches() {
+    const sid = store.currentSessionId
+    if (!sid) return
+    const tree = await api.get(`/api/sessions/${sid}/branch-tree`)
+    store.branchTree = tree
+    const choices = { ...store.branchChoices }
+    for (const node of tree) {
+      const rid = node.message.id
+      if (rid == null) continue
+      const ids = branchIdsOf(node)
+      if (!ids.length) continue
+      const cur = choices[rid]
+      if (cur === undefined || !ids.includes(cur)) choices[rid] = ids[ids.length - 1]
+    }
+    store.branchChoices = choices
+  }
+
+  async function refreshBranches(activeRoot = null) {
+    const sid = store.currentSessionId
+    if (!sid) return
+    const tree = await api.get(`/api/sessions/${sid}/branch-tree`)
+    store.branchTree = tree
+    const choices = { ...store.branchChoices }
+    for (const node of tree) {
+      const rid = node.message.id
+      if (rid == null) continue
+      const ids = branchIdsOf(node)
+      if (!ids.length) continue
+      const cur = choices[rid]
+      if (cur === undefined || !ids.includes(cur)) choices[rid] = ids[ids.length - 1]
+      if (rid === activeRoot) choices[rid] = ids[ids.length - 1]
+    }
+    store.branchChoices = choices
+  }
+
+  async function applyBranch(msg, dir) {
+    if (store.streaming) return
+    if (!msg || !msg.id) return
+    const node = branchNodeFor(msg.id)
+    const ids = branchIdsOf(node)
+    if (ids.length < 2) return
+    const cur = store.branchChoices[msg.id] !== undefined ? store.branchChoices[msg.id] : ids[ids.length - 1]
+    const idx = ids.indexOf(cur)
+    if (idx < 0) return
+    const next = ids[(idx + dir + ids.length) % ids.length]
+    if (next === cur) return
+    store.branchChoices = { ...store.branchChoices, [msg.id]: next }
   }
 
   async function newSession() {
@@ -138,6 +266,14 @@
   store.switchSessionMode = switchSessionMode
   store.applyTheme = applyTheme
   store.saveUi = saveUi
+  store.normalizeMessages = normalizeMessages
+  store.branchNodeFor = branchNodeFor
+  store.branchOf = branchOf
+  store.lastNonLatestRoot = lastNonLatestRoot
+  store.loadBranches = loadBranches
+  store.refreshBranches = refreshBranches
+  store.applyBranch = applyBranch
+  store.computeVisibleMessages = computeVisibleMessages
 
   window.store = store
 })()
