@@ -233,6 +233,13 @@ class Storage:
                 (session_id, message_id, branch_id),
             )
 
+    def delete_message(self, session_id: int, message_id: int):
+        with self._conn() as conn:
+            conn.execute(
+                "DELETE FROM messages WHERE id = ? AND session_id = ?",
+                (message_id, session_id),
+            )
+
     def mark_branch_root(self, session_id: int, message_id: int, branch_id: int):
         with self._conn() as conn:
             conn.execute(

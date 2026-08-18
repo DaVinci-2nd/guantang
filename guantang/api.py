@@ -1636,7 +1636,10 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                                 await ws.send_json({"type": "recognized", "message": updated})
                             except WebSocketDisconnect:
                                 raise
-                    history = ctx.history_to_openai(build_latest_path(history_messages, branch_choices))
+                    path = build_latest_path(history_messages, branch_choices)
+                    if regenerate_from:
+                        path = [m for m in path if (m.get("id") or 0) <= regenerate_from]
+                    history = ctx.history_to_openai(path)
                     ctx.maybe_auto_title(session_id, ws)
                 reasoning = ""
                 reply = ""
@@ -1676,6 +1679,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                     await asyncio.to_thread(
                         ctx.storage.update_message,
                         session_id, ai_id, content=output["text"], blocks=output["blocks"], interrupted=interrupted,
+                        reasoning=output["reasoning"],
                     )
 
                 async def finalize(interrupted):
@@ -1689,20 +1693,19 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                             await asyncio.to_thread(
                                 ctx.storage.update_message,
                                 session_id, ai_id, content=output["text"], blocks=output["blocks"], interrupted=interrupted,
+                                reasoning=output["reasoning"],
                                 branch_id=new_branch, branch_root=regenerate_from,
                             )
                             send_log.record_output(session_id, {**output, "branch_id": new_branch, "branch_root": regenerate_from})
                         else:
                             await asyncio.to_thread(ctx.storage.delete_branch_after, session_id, regenerate_from, branch_id)
-                            await asyncio.to_thread(
-                                ctx.storage.update_message,
-                                session_id, ai_id, content=output["text"], blocks=output["blocks"], interrupted=True,
-                            )
+                            await asyncio.to_thread(ctx.storage.delete_message, session_id, ai_id)
                             send_log.record_output(session_id, output)
                     else:
                         await asyncio.to_thread(
                             ctx.storage.update_message,
                             session_id, ai_id, content=output["text"], blocks=output["blocks"], interrupted=interrupted,
+                            reasoning=output["reasoning"],
                         )
                         send_log.record_output(session_id, output)
                     return await asyncio.to_thread(ctx.storage.get_message, session_id, ai_id)
@@ -1761,25 +1764,31 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                             new_branch = ctx.storage.next_branch_id(session_id)
                             ctx.storage.update_message(
                                 session_id, ai_id, content=output["text"], blocks=output["blocks"], interrupted=True,
+                                reasoning=output["reasoning"],
                                 branch_id=new_branch, branch_root=regenerate_from,
                             )
                             send_log.record_output(session_id, {**output, "branch_id": new_branch, "branch_root": regenerate_from})
                         else:
                             ctx.storage.delete_branch_after(session_id, regenerate_from, branch_id)
-                            ctx.storage.update_message(
-                                session_id, ai_id, content=output["text"], blocks=output["blocks"], interrupted=True,
-                            )
+                            ctx.storage.delete_message(session_id, ai_id)
                             send_log.record_output(session_id, output)
                     else:
-                        ctx.storage.update_message(
-                            session_id, ai_id, content=output["text"], blocks=output["blocks"], interrupted=True,
-                        )
+                        if not (output["text"] or output["reasoning"] or output["blocks"] or tool_events):
+                            ctx.storage.delete_message(session_id, ai_id)
+                        else:
+                            ctx.storage.update_message(
+                                session_id, ai_id, content=output["text"], blocks=output["blocks"], interrupted=True,
+                                reasoning=output["reasoning"],
+                            )
                         send_log.record_output(session_id, output)
                     ctx.storage.update_session(session_id, workdirs=workdirs)
                     ctx.maybe_auto_title(session_id)
                     raise
                 except ProviderError as e:
-                    await persist(True)
+                    if not (reply or reasoning or blocks or tool_events):
+                        await asyncio.to_thread(ctx.storage.delete_message, session_id, ai_id)
+                    else:
+                        await persist(True)
                     try:
                         await ws.send_json({"type": "error", "text": str(e)})
                     except WebSocketDisconnect:
