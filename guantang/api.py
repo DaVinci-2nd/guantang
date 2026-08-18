@@ -315,6 +315,7 @@ class ConfigPayload(BaseModel):
     ui: dict | None = None
     multimodal: dict | None = None
     auto_title: dict | None = None
+    search_tool_prompt: str | None = None
 
 
 class AppContext:
@@ -344,11 +345,16 @@ class AppContext:
     def resolve_search_skills(self, role: dict) -> list[dict]:
         chosen = set(role.get("skills") or [])
         all_skills = {s["name"]: s for s in self.skills.list()}
-        return [
+        bound = [
             all_skills[n]
             for n in chosen
             if n in all_skills and all_skills[n].get("type") == "search" and all_skills[n].get("enabled", True)
         ]
+        names = {s["name"] for s in bound}
+        for s in all_skills.values():
+            if s.get("type") == "search" and s.get("enabled", True) and s["name"] not in names:
+                bound.append(s)
+        return bound
 
     def builtin_tools_file(self):
         return self.cfg.root / self.cfg.get("builtin_tools_file", "prompts/builtin_tools.yaml")
@@ -394,6 +400,7 @@ class AppContext:
             max_tokens=self.cfg.get("max_tokens"),
             search_skills=search_defs,
             builtin_loader=self.builtin_tools_defs,
+            search_tool_prompt=self.cfg.get("search_tool_prompt", "") or "",
         )
         self.provider_key = key
 
@@ -720,6 +727,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             "ui": cfg.ui(),
             "multimodal": cfg.multimodal(),
             "auto_title": cfg.auto_title(),
+            "search_tool_prompt": cfg.get("search_tool_prompt", "") or "",
         }
 
     @app.get("/api/roles")
@@ -1375,6 +1383,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 mode=payload.auto_title.get("mode"),
                 rounds=payload.auto_title.get("rounds"),
             )
+        if payload.search_tool_prompt is not None:
+            cfg.data["search_tool_prompt"] = payload.search_tool_prompt
         cfg.save()
         return {"player": cfg.player(), "ui": cfg.ui(), "multimodal": cfg.multimodal(), "auto_title": cfg.auto_title()}
 

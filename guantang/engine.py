@@ -7,22 +7,6 @@ from .search import search
 from .stream_replace import StreamReplacer
 from .zh_translator import ZhTranslator
 
-WEB_SEARCH_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "web_search",
-        "description": "联网搜索互联网获取实时信息。当需要查询最新新闻、实时动态、事实验证或模型自身知识无法覆盖的内容时使用。",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "搜索关键词或完整问题"},
-                "max_results": {"type": "integer", "description": "返回结果数量，默认 5，最大 10"},
-            },
-            "required": ["query"],
-        },
-    },
-}
-
 
 class ApprovalStopped(Exception):
     def __init__(self, name: str, arguments: dict):
@@ -74,6 +58,7 @@ class Engine:
         builtin_loader=None,
         approval_handler=None,
         workdirs: list[str] | None = None,
+        search_tool_prompt: str = "",
     ):
         self.provider = provider
         self.mcp = mcp
@@ -87,6 +72,7 @@ class Engine:
         self.replace_rules = []
         self.check_cancel = None
         self.workdirs = workdirs if workdirs is not None else []
+        self.search_tool_prompt = search_tool_prompt or ""
 
     async def run(self, system_prompt: str, player_message: str, history: list[dict] | None = None, thinking=None):
         messages = list(history or [])
@@ -146,8 +132,8 @@ class Engine:
             messages.append(self._assistant_tool_message(tool_calls, reply_buf or None, reasoning_buf or None))
             for tc in tool_calls:
                 yield ("tool_exec", tc.name, tc.arguments)
-                if tc.name == "web_search":
-                    result = await self._call_web_search(tc.arguments)
+                if tc.name == "web_search" or tc.name.startswith("web_search_"):
+                    result = await self._call_web_search(tc.name, tc.arguments)
                 elif any(t["name"] == tc.name for t in builtin_defs):
                     result = await self._call_builtin(tc.name, tc.arguments, builtin_defs)
                 else:
@@ -159,7 +145,7 @@ class Engine:
 
         yield ("end", messages)
 
-    async def _call_web_search(self, arguments: dict) -> str:
+    async def _call_web_search(self, name: str, arguments: dict) -> str:
         query = str(arguments.get("query") or "").strip()
         if not query:
             return "搜索失败：缺少搜索关键词"
@@ -168,7 +154,16 @@ class Engine:
         except (TypeError, ValueError):
             max_results = 5
         max_results = max(1, min(max_results, 10))
-        skill = self.search_skills[0] if self.search_skills else {}
+        skill = {}
+        if name == "web_search":
+            if self.search_skills:
+                skill = self.search_skills[0]
+        else:
+            provider = name.removeprefix("web_search_")
+            skill = next(
+                (s for s in self.search_skills if (s.get("provider", "tavily") or "tavily") == provider),
+                None,
+            ) or {}
         result = await search(
             skill.get("provider", "tavily"),
             query,
@@ -213,8 +208,34 @@ class Engine:
                 continue
             seen.add(name)
             result.append(tool)
-        if self.search_skills and "web_search" not in seen:
-            result.append(WEB_SEARCH_TOOL)
+        if self.search_skills:
+            for i, skill in enumerate(self.search_skills):
+                provider = skill.get("provider", "tavily") or "tavily"
+                tname = "web_search" if i == 0 else f"web_search_{provider}"
+                if tname in seen:
+                    continue
+                seen.add(tname)
+                desc = ""
+                if self.search_tool_prompt:
+                    try:
+                        desc = self.search_tool_prompt.format(provider=provider)
+                    except Exception:
+                        desc = self.search_tool_prompt
+                result.append({
+                    "type": "function",
+                    "function": {
+                        "name": tname,
+                        "description": desc,
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {"type": "string"},
+                                "max_results": {"type": "integer"},
+                            },
+                            "required": ["query"],
+                        },
+                    },
+                })
         return result
 
     @staticmethod

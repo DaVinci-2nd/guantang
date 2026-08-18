@@ -22,6 +22,7 @@
     player: { name: '', avatar: '' },
     multimodal: { enabled: false, model: '', prompt: '' },
     autoTitle: { enabled: false, model: '', prompt: '', mode: 1, rounds: 3 },
+    searchToolPrompt: '',
     streaming: false,
     ws: null,
     activeWs: null,
@@ -65,6 +66,7 @@
     store.player = data.player
     store.multimodal = data.multimodal || { enabled: false, model: '', prompt: '' }
     store.autoTitle = data.auto_title || { enabled: false, model: '', prompt: '', mode: 1, rounds: 3 }
+    store.searchToolPrompt = data.search_tool_prompt || ''
     store.theme = data.ui.theme
     store.leftOpen = data.ui.sidebar_left
     store.rightOpen = data.ui.sidebar_right

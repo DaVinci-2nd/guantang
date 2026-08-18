@@ -101,6 +101,16 @@
         }
       }
 
+      async function saveSearchToolPrompt() {
+        try {
+          await api.put('/api/config', { search_tool_prompt: store.searchToolPrompt })
+          await store.loadState()
+          store.notify('已保存', 'ok')
+        } catch (e) {
+          store.notify(e.message)
+        }
+      }
+
       function uploadPlayerAvatar() {
         if (playerAvatarFile.value) playerAvatarFile.value.click()
       }
@@ -168,7 +178,7 @@
         }
       }
 
-      return { store, playerName, playerAvatar, playerAvatarFile, savePlayer, saveMultimodal, saveAutoTitle, uploadPlayerAvatar, onPlayerAvatarFile, builtinTools, approvalRejectText, addParam, removeParam, saveBuiltinTools, applyTheme: store.applyTheme, saveUi: store.saveUi, settingsFile, importConfirm, importSummary, importStep2Open, importKeyword, exportSettings, onSettingsFile, importStep2, doImportSettings }
+      return { store, playerName, playerAvatar, playerAvatarFile, savePlayer, saveMultimodal, saveAutoTitle, saveSearchToolPrompt, uploadPlayerAvatar, onPlayerAvatarFile, builtinTools, approvalRejectText, addParam, removeParam, saveBuiltinTools, applyTheme: store.applyTheme, saveUi: store.saveUi, settingsFile, importConfirm, importSummary, importStep2Open, importKeyword, exportSettings, onSettingsFile, importStep2, doImportSettings }
     },
   }
 
