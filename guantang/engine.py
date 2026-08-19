@@ -155,15 +155,13 @@ class Engine:
             max_results = 5
         max_results = max(1, min(max_results, 10))
         skill = {}
-        if name == "web_search":
-            if self.search_skills:
-                skill = self.search_skills[0]
-        else:
-            provider = name.removeprefix("web_search_")
-            skill = next(
-                (s for s in self.search_skills if (s.get("provider", "tavily") or "tavily") == provider),
-                None,
-            ) or {}
+        for s in self.search_skills:
+            p = s.get("provider", "tavily") or "tavily"
+            tn = str(s.get("tool_name") or "").strip()
+            n = tn or f"web_search_{p}"
+            if n == name:
+                skill = s
+                break
         result = await search(
             skill.get("provider", "tavily"),
             query,
@@ -209,9 +207,9 @@ class Engine:
             seen.add(name)
             result.append(tool)
         if self.search_skills:
-            for i, skill in enumerate(self.search_skills):
+            for skill in self.search_skills:
                 provider = skill.get("provider", "tavily") or "tavily"
-                tname = "web_search" if i == 0 else f"web_search_{provider}"
+                tname = str(skill.get("tool_name") or "").strip() or f"web_search_{provider}"
                 if tname in seen:
                     continue
                 seen.add(tname)

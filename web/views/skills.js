@@ -12,7 +12,7 @@
           editor.value = { ...skill, _orig: skill.name, args: [...(skill.args || [])] }
           argsText.value = (skill.args || []).join('\n')
         } else {
-          editor.value = { name: '', type: 'mcp', command: '', args: [], env: null, enabled: true, provider: 'tavily', api_key: '', base_url: '' }
+          editor.value = { name: '', type: 'mcp', command: '', args: [], env: null, enabled: true, provider: 'tavily', api_key: '', base_url: '', tool_name: '' }
           argsText.value = ''
         }
       }
