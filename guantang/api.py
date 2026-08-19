@@ -282,6 +282,8 @@ class SkillPayload(BaseModel):
     provider: str = "tavily"
     api_key: str = ""
     base_url: str = ""
+    url: str = ""
+    tool_name: str = ""
 
 
 class ModePayload(BaseModel):
@@ -346,16 +348,11 @@ class AppContext:
     def resolve_search_skills(self, role: dict) -> list[dict]:
         chosen = set(role.get("skills") or [])
         all_skills = {s["name"]: s for s in self.skills.list()}
-        bound = [
+        return [
             all_skills[n]
             for n in chosen
             if n in all_skills and all_skills[n].get("type") == "search" and all_skills[n].get("enabled", True)
         ]
-        names = {s["name"] for s in bound}
-        for s in all_skills.values():
-            if s.get("type") == "search" and s.get("enabled", True) and s["name"] not in names:
-                bound.append(s)
-        return bound
 
     def builtin_tools_file(self):
         return self.cfg.root / self.cfg.get("builtin_tools_file", "prompts/builtin_tools.yaml")

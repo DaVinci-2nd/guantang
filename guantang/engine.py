@@ -73,6 +73,7 @@ class Engine:
         self.check_cancel = None
         self.workdirs = workdirs if workdirs is not None else []
         self.search_tool_prompt = search_tool_prompt or ""
+        self._search_tool_names = set()
 
     async def run(self, system_prompt: str, player_message: str, history: list[dict] | None = None, thinking=None):
         messages = list(history or [])
@@ -132,7 +133,7 @@ class Engine:
             messages.append(self._assistant_tool_message(tool_calls, reply_buf or None, reasoning_buf or None))
             for tc in tool_calls:
                 yield ("tool_exec", tc.name, tc.arguments)
-                if tc.name == "web_search" or tc.name.startswith("web_search_"):
+                if tc.name in self._search_tool_names:
                     result = await self._call_web_search(tc.name, tc.arguments)
                 elif any(t["name"] == tc.name for t in builtin_defs):
                     result = await self._call_builtin(tc.name, tc.arguments, builtin_defs)
@@ -209,10 +210,13 @@ class Engine:
         if self.search_skills:
             for skill in self.search_skills:
                 provider = skill.get("provider", "tavily") or "tavily"
+                if provider == "tavily" and not (skill.get("api_key") or "").strip():
+                    continue
                 tname = str(skill.get("tool_name") or "").strip() or f"web_search_{provider}"
                 if tname in seen:
                     continue
                 seen.add(tname)
+                self._search_tool_names.add(tname)
                 desc = ""
                 if self.search_tool_prompt:
                     try:
