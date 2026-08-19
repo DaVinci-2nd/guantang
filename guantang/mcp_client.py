@@ -3,6 +3,7 @@ from pathlib import Path
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.client.streamable_http import streamable_http_client
 
 
 class MCPManager:
@@ -24,12 +25,16 @@ class MCPManager:
                 print(f"[MCP] 技能 {spec.get('name', '?')} 连接失败：{e}")
 
     async def _connect_one(self, spec: dict):
-        params = StdioServerParameters(
-            command=spec["command"],
-            args=spec.get("args", []),
-            env=spec.get("env"),
-        )
-        ctx = stdio_client(params)
+        url = str(spec.get("url") or "").strip()
+        if url:
+            ctx = streamable_http_client(url)
+        else:
+            params = StdioServerParameters(
+                command=spec["command"],
+                args=spec.get("args", []),
+                env=spec.get("env"),
+            )
+            ctx = stdio_client(params)
         read, write = await ctx.__aenter__()
         session_ctx = ClientSession(read, write)
         try:
