@@ -243,8 +243,8 @@ class Storage:
     def mark_branch_root(self, session_id: int, message_id: int, branch_id: int):
         with self._conn() as conn:
             conn.execute(
-                "UPDATE messages SET branch_root = ? WHERE session_id = ? AND id > ? AND branch_id = ? AND branch_root = 0",
-                (message_id, session_id, message_id, branch_id),
+                "UPDATE messages SET branch_root = ?, branch_id = ? WHERE session_id = ? AND id > ? AND branch_root = 0",
+                (message_id, branch_id, session_id, message_id),
             )
 
     def delete_messages_after(self, session_id: int, message_id: int):

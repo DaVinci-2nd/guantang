@@ -162,7 +162,7 @@
     const msgs = await api.get(`/api/sessions/${id}/messages`)
     const list = normalizeMessages(msgs)
     const pending = store.streamingMsgs[id]
-    if (pending) list.push(pending)
+    if (pending && pending.streaming) list.push(pending)
     store.messages = list
     await loadBranches()
   }
@@ -235,17 +235,37 @@
   }
 
   async function applyBranch(msg, dir) {
-    if (store.streaming) return
-    if (!msg || !msg.id) return
+    if (store.streaming) {
+      notify('正在回复中，无法切换分支')
+      return
+    }
+    if (!msg || !msg.id) {
+      notify('切换分支失败：消息无效')
+      return
+    }
     const node = branchNodeFor(msg.id)
     const ids = branchIdsOf(node)
-    if (ids.length < 2) return
+    if (!ids.length || ids.length < 2) {
+      notify('切换分支失败：该消息没有可切换的分支')
+      return
+    }
     const cur = store.branchChoices[msg.id] !== undefined ? store.branchChoices[msg.id] : ids[ids.length - 1]
     const idx = ids.indexOf(cur)
-    if (idx < 0) return
+    if (idx < 0) {
+      notify('切换分支失败：当前分支状态异常')
+      return
+    }
     const next = ids[(idx + dir + ids.length) % ids.length]
     if (next === cur) return
     store.branchChoices = { ...store.branchChoices, [msg.id]: next }
+    const sid = store.currentSessionId
+    if (!sid) return
+    try {
+      const msgs = await api.get(`/api/sessions/${sid}/messages`)
+      store.messages = store.normalizeMessages(msgs)
+    } catch (e) {
+      notify('刷新失败：' + (e.message || e))
+    }
   }
 
   async function newSession() {

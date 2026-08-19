@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException, UploadFile, WebSocket, WebSocketDisc
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.websockets import WebSocketState
 from pydantic import BaseModel, Field
 
 from .builtin_tools import parse_tools, read_approval_reject_text, tools_to_yaml
@@ -1532,7 +1533,17 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 search_defs = ctx.resolve_search_skills(role)
                 await ctx.ensure(model_def, skill_defs, search_defs)
 
+                async def abort_watch():
+                    try:
+                        m = await ws.receive_json()
+                    except Exception:
+                        return "disconnect"
+                    return "abort" if m.get("type") == "abort" else "other"
+
+                abort_task = asyncio.create_task(abort_watch())
+
                 async def approval_handler(name: str, arguments: dict, operation: str, diff=None) -> str:
+                    abort_task.cancel()
                     approval_id = f"ap_{uuid.uuid4().hex[:10]}"
                     payload = {
                         "type": "approval",
@@ -1582,6 +1593,13 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                         regenerate_from = None
                     if regenerate_from and not ctx.storage.get_message(session_id, regenerate_from):
                         regenerate_from = None
+                    if regenerate_from:
+                        target = ctx.storage.get_message(session_id, regenerate_from)
+                        if target and (target["sender"] != "player" or target.get("branch_root")):
+                            for m in reversed(ctx.storage.list_messages(session_id)):
+                                if m["id"] < regenerate_from and m["sender"] == "player" and not m.get("branch_root"):
+                                    regenerate_from = m["id"]
+                                    break
                 branch_choices = {}
                 raw_choices = data.get("branch_choices")
                 if isinstance(raw_choices, dict):
@@ -1658,13 +1676,21 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 text_buf = ""
                 reasoning_buf = ""
                 if regenerate_from:
-                    ctx.storage.mark_branch_root(session_id, regenerate_from, branch_id)
+                    has_after = any(m["id"] > regenerate_from for m in ctx.storage.list_messages(session_id))
+                    if has_after:
+                        await asyncio.to_thread(ctx.storage.mark_branch_root, session_id, regenerate_from, branch_id)
+                        branch_id = await asyncio.to_thread(ctx.storage.next_branch_id, session_id)
                 ai_msg = await asyncio.to_thread(
                     ctx.storage.add_message,
                     session_id, "character", "", "", [], character_name=role["name"], blocks=[], interrupted=True,
                     branch_id=branch_id or 0, branch_root=regenerate_from or 0,
                 )
                 ai_id = ai_msg["id"]
+                if regenerate_from:
+                    try:
+                        await ws.send_json({"type": "branch_created", "message": ai_msg, "regenerate_from": regenerate_from})
+                    except WebSocketDisconnect:
+                        raise
                 flush_count = 0
 
                 def current_blocks():
@@ -1722,6 +1748,10 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
                 try:
                     async for event in ctx.engine.run_messages(system, history, thinking=thinking):
+                        if abort_task.cancelled():
+                            abort_task = asyncio.create_task(abort_watch())
+                        if abort_task.done():
+                            raise asyncio.CancelledError()
                         kind = event[0]
                         if kind == "reasoning":
                             back = event[2] if len(event) > 2 else 0
@@ -1769,8 +1799,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 except asyncio.CancelledError:
                     output = build_output()
                     if regenerate_from:
-                        had_output = _branch_has_output(ctx.storage, session_id, ai_id, regenerate_from, branch_id)
-                        if had_output:
+                        if output["text"] or output["reasoning"] or output["blocks"] or tool_events:
                             new_branch = ctx.storage.next_branch_id(session_id)
                             ctx.storage.update_message(
                                 session_id, ai_id, content=output["text"], blocks=output["blocks"], interrupted=True,
@@ -1779,7 +1808,6 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                             )
                             send_log.record_output(session_id, {**output, "branch_id": new_branch, "branch_root": regenerate_from})
                         else:
-                            ctx.storage.delete_branch_after(session_id, regenerate_from, branch_id)
                             ctx.storage.delete_message(session_id, ai_id)
                             send_log.record_output(session_id, output)
                     else:
@@ -1793,6 +1821,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                         send_log.record_output(session_id, output)
                     ctx.storage.update_session(session_id, workdirs=workdirs)
                     ctx.maybe_auto_title(session_id)
+                    abort_task.cancel()
                     raise
                 except ProviderError as e:
                     if not (reply or reasoning or blocks or tool_events):
@@ -1805,6 +1834,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                         pass
                     ctx.storage.update_session(session_id, workdirs=workdirs)
                     ctx.maybe_auto_title(session_id)
+                    abort_task.cancel()
                     continue
                 except ApprovalStopped as e:
                     for te in tool_events:
@@ -1818,12 +1848,14 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                     ctx.storage.update_session(session_id, workdirs=workdirs)
                     saved = await finalize(True)
                     ctx.maybe_auto_title(session_id)
+                    abort_task.cancel()
                     try:
                         await ws.send_json({"type": "end", "message": saved, "interrupted": True})
                     except WebSocketDisconnect:
                         pass
                     continue
                 except WebSocketDisconnect:
+                    abort_task.cancel()
                     await persist(True)
                     ctx.storage.update_session(session_id, workdirs=workdirs)
                     ctx.maybe_auto_title(session_id)
@@ -1836,6 +1868,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                     await persist(True)
                     ctx.storage.update_session(session_id, workdirs=workdirs)
                     ctx.maybe_auto_title(session_id)
+                    abort_task.cancel()
                     try:
                         await ws.send_json({"type": "error", "text": f"处理出错：{type(e).__name__}: {e}"})
                     except WebSocketDisconnect:
@@ -1844,6 +1877,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 saved = await finalize(False)
                 ctx.storage.update_session(session_id, workdirs=workdirs)
                 ctx.maybe_auto_title(session_id, ws)
+                abort_task.cancel()
                 await ws.send_json({"type": "end", "message": saved})
         except WebSocketDisconnect:
             pass

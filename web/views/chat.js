@@ -397,8 +397,10 @@
 
         const ws = new WebSocket(`ws://${location.host}/ws/chat`)
         store.activeWs = ws
-        ws.onmessage = (ev) => {
+        ws._aborted = false
+        ws.onmessage = async (ev) => {
           const data = JSON.parse(ev.data)
+          if (ws._aborted && ['reasoning', 'text', 'tool_call', 'tool_exec', 'tool_result'].includes(data.type)) return
           if (data.type === 'reasoning') {
             const back = data.backspace || 0
             if (back > 0) {
@@ -469,6 +471,22 @@
               tb.result = data.text
             }
             scrollBottom()
+          } else if (data.type === 'branch_created') {
+            try {
+              const root = data.regenerate_from
+              if (root) {
+                const ridx = store.messages.findIndex((m) => m.id === root)
+                if (ridx >= 0) {
+                  const kept = store.messages.slice(0, ridx + 1)
+                  const pending = store.streamingMsgs[sid]
+                  if (pending && !kept.includes(pending)) kept.push(pending)
+                  store.messages = kept
+                }
+              }
+              store.refreshBranches(root || null).catch((e) => store.notify('刷新失败：' + (e.message || e)))
+            } catch (e) {
+              store.notify('刷新失败：' + (e.message || e))
+            }
           } else if (data.type === 'title') {
             const s = store.sessions.find((x) => x.id === data.session_id)
             if (s) {
@@ -515,12 +533,14 @@
               b.result = '已中断'
             }
           })
-          if (aiMsg.streaming) {
-            aiMsg.streaming = false
-            aiMsg.interrupted = true
-            store.streaming = false
-            if (store.streamingMsgs[sid] === aiMsg) delete store.streamingMsgs[sid]
-          }
+          aiMsg.streaming = false
+          aiMsg.interrupted = true
+          store.streaming = false
+          if (store.streamingMsgs[sid] === aiMsg) delete store.streamingMsgs[sid]
+          api.get(`/api/sessions/${sid}/messages`).then((msgs) => {
+            store.messages = store.normalizeMessages(msgs)
+            store.refreshBranches(branchRoot || regenerateFrom || null)
+          }).catch((e) => store.notify('刷新失败：' + (e.message || e)))
         }
         ws.onopen = () => {
           const payload = { session_id: sid, message: content }
@@ -545,6 +565,7 @@
             store.activeWs.send(JSON.stringify({ type: 'abort' }))
           }
         } catch (e) { /* 忽略 */ }
+        store.activeWs._aborted = true
         store.activeWs.close()
         if (aiMsg) {
           aiMsg.streaming = false
@@ -812,7 +833,7 @@
       }
 
       watch(visibleMessages, (nv, ov) => {
-        if (nv !== ov) scrollBottom(true)
+        if (nv !== ov) scrollBottom()
       })
 
       return {
