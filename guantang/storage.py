@@ -226,13 +226,6 @@ class Storage:
     def next_branch_id(self, session_id: int) -> int:
         return self.latest_branch_id(session_id) + 1
 
-    def delete_branch_after(self, session_id: int, message_id: int, branch_id: int):
-        with self._conn() as conn:
-            conn.execute(
-                "DELETE FROM messages WHERE session_id = ? AND id > ? AND branch_id = ?",
-                (session_id, message_id, branch_id),
-            )
-
     def delete_message(self, session_id: int, message_id: int):
         with self._conn() as conn:
             conn.execute(

@@ -82,16 +82,6 @@ def build_latest_path(messages: list[dict], choices: dict | None = None) -> list
     return result
 
 
-def _branch_has_output(storage, session_id: int, exclude_id: int, branch_from: int, branch_id: int) -> bool:
-    for m in storage.list_messages(session_id):
-        if m["id"] == exclude_id or m["id"] <= branch_from:
-            continue
-        if m.get("branch_id") == branch_id and m["sender"] == "character":
-            if m.get("content") or m.get("reasoning") or m.get("blocks") or m.get("tool_events"):
-                return True
-    return False
-
-
 def _msg_content_text(content) -> str:
     if isinstance(content, list):
         return "".join(
@@ -1554,6 +1544,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                     await ws.send_json(payload)
                     while True:
                         resp = await ws.receive_json()
+                        if resp.get("type") == "abort":
+                            return "reject"
                         if resp.get("type") != "approval_response" or resp.get("approval_id") != approval_id:
                             continue
                         decision = resp.get("decision")
@@ -1717,30 +1709,12 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
                 async def finalize(interrupted):
                     output = build_output()
-                    if regenerate_from:
-                        had_output = await asyncio.to_thread(
-                            _branch_has_output, ctx.storage, session_id, ai_id, regenerate_from, branch_id
-                        )
-                        if had_output:
-                            new_branch = await asyncio.to_thread(ctx.storage.next_branch_id, session_id)
-                            await asyncio.to_thread(
-                                ctx.storage.update_message,
-                                session_id, ai_id, content=output["text"], blocks=output["blocks"], interrupted=interrupted,
-                                reasoning=output["reasoning"],
-                                branch_id=new_branch, branch_root=regenerate_from,
-                            )
-                            send_log.record_output(session_id, {**output, "branch_id": new_branch, "branch_root": regenerate_from})
-                        else:
-                            await asyncio.to_thread(ctx.storage.delete_branch_after, session_id, regenerate_from, branch_id)
-                            await asyncio.to_thread(ctx.storage.delete_message, session_id, ai_id)
-                            send_log.record_output(session_id, output)
-                    else:
-                        await asyncio.to_thread(
-                            ctx.storage.update_message,
-                            session_id, ai_id, content=output["text"], blocks=output["blocks"], interrupted=interrupted,
-                            reasoning=output["reasoning"],
-                        )
-                        send_log.record_output(session_id, output)
+                    await asyncio.to_thread(
+                        ctx.storage.update_message,
+                        session_id, ai_id, content=output["text"], blocks=output["blocks"], interrupted=interrupted,
+                        reasoning=output["reasoning"],
+                    )
+                    send_log.record_output(session_id, output)
                     return await asyncio.to_thread(ctx.storage.get_message, session_id, ai_id)
 
                 try:
@@ -1795,36 +1769,26 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                             await persist(True)
                 except asyncio.CancelledError:
                     output = build_output()
-                    if regenerate_from:
-                        if output["text"] or output["reasoning"] or output["blocks"] or tool_events:
-                            new_branch = ctx.storage.next_branch_id(session_id)
-                            ctx.storage.update_message(
-                                session_id, ai_id, content=output["text"], blocks=output["blocks"], interrupted=True,
-                                reasoning=output["reasoning"],
-                                branch_id=new_branch, branch_root=regenerate_from,
-                            )
-                            send_log.record_output(session_id, {**output, "branch_id": new_branch, "branch_root": regenerate_from})
-                        else:
-                            ctx.storage.delete_message(session_id, ai_id)
-                            send_log.record_output(session_id, output)
-                    else:
-                        if not (output["text"] or output["reasoning"] or output["blocks"] or tool_events):
-                            ctx.storage.delete_message(session_id, ai_id)
-                        else:
-                            ctx.storage.update_message(
-                                session_id, ai_id, content=output["text"], blocks=output["blocks"], interrupted=True,
-                                reasoning=output["reasoning"],
-                            )
-                        send_log.record_output(session_id, output)
+                    await asyncio.to_thread(
+                        ctx.storage.update_message,
+                        session_id, ai_id, content=output["text"], blocks=output["blocks"], interrupted=True,
+                        reasoning=output["reasoning"],
+                    )
+                    send_log.record_output(session_id, output)
                     ctx.storage.update_session(session_id, workdirs=workdirs)
                     ctx.maybe_auto_title(session_id)
                     abort_task.cancel()
-                    raise
+                    try:
+                        await ws.send_json({
+                            "type": "end",
+                            "message": await asyncio.to_thread(ctx.storage.get_message, session_id, ai_id),
+                            "interrupted": True,
+                        })
+                    except WebSocketDisconnect:
+                        pass
+                    continue
                 except ProviderError as e:
-                    if not (reply or reasoning or blocks or tool_events):
-                        await asyncio.to_thread(ctx.storage.delete_message, session_id, ai_id)
-                    else:
-                        await persist(True)
+                    await persist(True)
                     try:
                         await ws.send_json({"type": "error", "text": str(e)})
                     except WebSocketDisconnect:

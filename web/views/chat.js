@@ -494,6 +494,7 @@
               s.title_set = 1
             }
           } else if (data.type === 'error') {
+            ws._ended = true
             aiMsg.content = aiMsg.content || ''
             store.notify(data.text)
             aiMsg.streaming = false
@@ -501,15 +502,18 @@
             if (store.streamingMsgs[sid] === aiMsg) delete store.streamingMsgs[sid]
             ws.close()
           } else if (data.type === 'end') {
+            ws._ended = true
             aiMsg.streaming = false
-            aiMsg.id = data.message.id
-            aiMsg.created_at = data.message.created_at
-            aiMsg.tool_events = data.message.tool_events
-            aiMsg.reasoning = data.message.reasoning
-            aiMsg.content = data.message.content
-            aiMsg.interrupted = !!data.interrupted
-            if (data.message.blocks && data.message.blocks.length) {
-              aiMsg.blocks = data.message.blocks
+            if (data.message) {
+              aiMsg.id = data.message.id
+              aiMsg.created_at = data.message.created_at
+              aiMsg.tool_events = data.message.tool_events
+              aiMsg.reasoning = data.message.reasoning
+              aiMsg.content = data.message.content
+              aiMsg.interrupted = !!data.interrupted
+              if (data.message.blocks && data.message.blocks.length) {
+                aiMsg.blocks = data.message.blocks
+              }
             }
             store.streaming = false
             if (store.streamingMsgs[sid] === aiMsg) delete store.streamingMsgs[sid]
@@ -534,7 +538,7 @@
             }
           })
           aiMsg.streaming = false
-          aiMsg.interrupted = true
+          if (!ws._ended) aiMsg.interrupted = true
           store.streaming = false
           if (store.streamingMsgs[sid] === aiMsg) delete store.streamingMsgs[sid]
           api.get(`/api/sessions/${sid}/messages`).then((msgs) => {
@@ -559,19 +563,18 @@
 
       function abortStream() {
         if (!store.streaming || !store.activeWs) return
-        const aiMsg = store.activeAiMsg
+        const ws = store.activeWs
         try {
-          if (store.activeWs.readyState === WebSocket.OPEN) {
-            store.activeWs.send(JSON.stringify({ type: 'abort' }))
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'abort' }))
           }
         } catch (e) { /* 忽略 */ }
-        store.activeWs._aborted = true
-        store.activeWs.close()
-        if (aiMsg) {
-          aiMsg.streaming = false
-          aiMsg.interrupted = true
-        }
-        store.streaming = false
+        ws._aborted = true
+        setTimeout(() => {
+          if (ws.readyState !== WebSocket.CLOSED) {
+            ws.close()
+          }
+        }, 5000)
       }
 
       function onApprove(block, decision) {
