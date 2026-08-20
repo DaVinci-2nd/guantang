@@ -320,10 +320,6 @@ class AppContext:
         self.models = ModelStore(cfg.root)
         self.storage = Storage(cfg.root / "data" / "guantang.db")
         self.assembler = PromptAssembler(cfg.root)
-        self.provider = None
-        self.provider_key = None
-        self.mcp = MCPManager()
-        self.engine = None
         self.pending_tasks = []
 
     def resolve_skills(self, role: dict) -> list[dict]:
@@ -359,30 +355,24 @@ class AppContext:
     def approval_reject_text(self) -> str:
         return read_approval_reject_text(self.builtin_tools_text())
 
-    async def ensure(self, model_def: dict, skill_defs: list[dict], search_defs: list[dict] | None = None):
-        search_defs = search_defs or []
-        key = (model_def.get("name"), tuple(s["name"] for s in skill_defs), tuple(s["name"] for s in search_defs))
-        if self.provider_key == key:
-            return
-        if self.provider:
-            await self.provider.close()
-        await self.mcp.close()
+    async def build_engine(self, model_def: dict, skill_defs: list[dict], search_defs: list[dict] | None = None) -> Engine:
+        mcp = MCPManager()
+        await mcp.start(skill_defs or [])
         api_key = model_def.get("api_key") or self.cfg.api_key("DEEPSEEK_API_KEY")
-        self.provider = build_provider(
+        provider = build_provider(
             model_def,
             api_key,
             timeout=self.cfg.get("timeout", 120),
             max_retries=self.cfg.get("max_retries", 2),
         )
-        await self.mcp.start(skill_defs)
         translator = ZhTranslator(
-            self.provider,
+            provider,
             str(self.cfg.root / self.cfg.get("zh_cache_file", "data/zh_cache.json")),
             self.cfg.root / self.cfg.get("translator_file", "prompts/translator.md"),
         )
-        self.engine = Engine(
-            self.provider,
-            self.mcp,
+        return Engine(
+            provider,
+            mcp,
             translator,
             temperature=self.cfg.get("temperature"),
             max_tokens=self.cfg.get("max_tokens"),
@@ -390,7 +380,355 @@ class AppContext:
             builtin_loader=self.builtin_tools_defs,
             search_tool_prompt=self.cfg.get("search_tool_prompt", "") or "",
         )
-        self.provider_key = key
+
+    async def process_chat(self, ws: WebSocket, data: dict, session_id: int):
+        ctx = self
+        cfg = self.cfg
+        try:
+            session, role, model_def = ctx.session_context(session_id)
+        except HTTPException as e:
+            await ws.send_json({"type": "error", "text": e.detail})
+            return
+        skill_defs = ctx.resolve_skills(role)
+        search_defs = ctx.resolve_search_skills(role)
+        engine = await ctx.build_engine(model_def, skill_defs, search_defs)
+        try:
+            async def abort_watch():
+                try:
+                    m = await ws.receive_json()
+                except Exception:
+                    return "disconnect"
+                return "abort" if m.get("type") == "abort" else "other"
+
+            abort_task = asyncio.create_task(abort_watch())
+
+            async def approval_handler(name: str, arguments: dict, operation: str, diff=None) -> str:
+                abort_task.cancel()
+                approval_id = f"ap_{uuid.uuid4().hex[:10]}"
+                payload = {
+                    "type": "approval",
+                    "approval_id": approval_id,
+                    "name": name,
+                    "arguments": arguments,
+                    "operation": operation,
+                }
+                if diff:
+                    payload["diff"] = diff
+                await ws.send_json(payload)
+                while True:
+                    resp = await ws.receive_json()
+                    if resp.get("type") == "abort":
+                        return "reject"
+                    if resp.get("type") != "approval_response" or resp.get("approval_id") != approval_id:
+                        continue
+                    decision = resp.get("decision")
+                    if decision in ("allow", "reject", "reject_stop"):
+                        return decision
+
+            workdirs = session.get("workdirs") or []
+            engine.approval_handler = approval_handler
+            engine.approval_reject_text = ctx.approval_reject_text()
+            engine.workdirs = workdirs
+            engine.temperature = role.get("temperature") if role.get("temperature") is not None else cfg.get("temperature")
+            engine.max_tokens = role.get("max_tokens") if role.get("max_tokens") is not None else cfg.get("max_tokens")
+            engine.replace_rules = []
+            if session.get("mode"):
+                mode = ctx.modes.get(session["mode"])
+                if mode:
+                    engine.replace_rules = mode.get("replace_rules") or []
+
+            async def check_cancel() -> bool:
+                try:
+                    msg = await asyncio.wait_for(ws.receive_json(), timeout=1)
+                except asyncio.TimeoutError:
+                    return False
+                except WebSocketDisconnect:
+                    return True
+                return msg.get("type") == "abort"
+
+            engine.check_cancel = check_cancel
+            regenerate_from = None
+            if data.get("regenerate_from"):
+                try:
+                    regenerate_from = int(data.get("regenerate_from"))
+                except (TypeError, ValueError):
+                    regenerate_from = None
+                if regenerate_from and not ctx.storage.get_message(session_id, regenerate_from):
+                    regenerate_from = None
+                if regenerate_from:
+                    target = ctx.storage.get_message(session_id, regenerate_from)
+                    if target and (target["sender"] != "player" or target.get("branch_root")):
+                        for m in reversed(ctx.storage.list_messages(session_id)):
+                            if m["id"] < regenerate_from and m["sender"] == "player" and not m.get("branch_root"):
+                                regenerate_from = m["id"]
+                                break
+            branch_choices = {}
+            raw_choices = data.get("branch_choices")
+            if isinstance(raw_choices, dict):
+                for k, v in raw_choices.items():
+                    try:
+                        branch_choices[int(k)] = int(v)
+                    except (TypeError, ValueError):
+                        continue
+            branch_id = None
+            if not regenerate_from and branch_choices:
+                branch_msgs = ctx.messages_with_restored(session_id)
+                branch_roots = sorted({m["branch_root"] for m in branch_msgs if m.get("branch_root")})
+                if branch_roots:
+                    last_root = branch_roots[-1]
+                    root_branches = sorted({
+                        m["branch_id"] for m in branch_msgs
+                        if m.get("branch_root") == last_root
+                    })
+                    chosen = branch_choices.get(last_root)
+                    if chosen and chosen in root_branches and root_branches and chosen != max(root_branches):
+                        regenerate_from = last_root
+                        branch_id = chosen
+            if branch_id is None:
+                branch_id = ctx.storage.latest_branch_id(session_id)
+            if regenerate_from:
+                later = [m for m in ctx.storage.list_messages(session_id) if m["id"] > regenerate_from]
+                if later and all(
+                    not (m.get("content") or m.get("reasoning") or m.get("blocks") or m.get("tool_events"))
+                    for m in later
+                ):
+                    for m in later:
+                        await asyncio.to_thread(ctx.storage.delete_message, session_id, m["id"])
+                    regenerate_from = None
+            set_context(
+                session_id=session_id, role=role["name"], model=model_def.get("model", ""),
+                purpose="chat", regenerate_from=regenerate_from or 0, branch_id=branch_id or 0,
+            )
+            system = ctx.build_system(session, role, model_def)
+            thinking = build_thinking(
+                model_def.get("model", ""),
+                role.get("thinking_mode", ""),
+                role.get("thinking_custom", ""),
+            )
+            super_messages = data.get("super_messages")
+            use_super = bool(super_messages)
+            history_messages = ctx.messages_with_restored(session_id)
+            if use_super:
+                system_parts = [m.get("content", "") for m in super_messages if m.get("role") == "system"]
+                super_system = "\n\n".join(p for p in system_parts if p)
+                if super_system:
+                    system = super_system
+                player_rows = [m for m in super_messages if m.get("role") == "user"]
+                if player_rows:
+                    last_player = player_rows[-1].get("content", "")
+                    if history_messages and history_messages[-1]["sender"] == "player":
+                        ctx.storage.update_message(session_id, history_messages[-1]["id"], content=last_player)
+                    else:
+                        ctx.storage.add_message(session_id, "player", last_player)
+                history = [
+                    {"role": "user" if m.get("role") == "user" else "assistant", "content": m.get("content", "")}
+                    for m in super_messages
+                    if m.get("role") != "system"
+                ]
+            else:
+                if history_messages and history_messages[-1]["sender"] == "player":
+                    recognized_id = await ctx.recognize_message_images(history_messages[-1])
+                    if recognized_id:
+                        updated = ctx.storage.get_message(session_id, recognized_id)
+                        history_messages = ctx.messages_with_restored(session_id)
+                        try:
+                            await ws.send_json({"type": "recognized", "message": updated})
+                        except WebSocketDisconnect:
+                            raise
+                path = build_latest_path(history_messages, branch_choices)
+                if regenerate_from:
+                    path = [m for m in path if (m.get("id") or 0) <= regenerate_from]
+                history = ctx.history_to_openai(path)
+                ctx.maybe_auto_title(session_id, ws)
+            reasoning = ""
+            reply = ""
+            tool_events = []
+            blocks = []
+            text_buf = ""
+            reasoning_buf = ""
+            if regenerate_from:
+                has_after = any(m["id"] > regenerate_from for m in ctx.storage.list_messages(session_id))
+                if has_after:
+                    await asyncio.to_thread(ctx.storage.mark_branch_root, session_id, regenerate_from, branch_id)
+                    branch_id = await asyncio.to_thread(ctx.storage.next_branch_id, session_id)
+            ai_msg = await asyncio.to_thread(
+                ctx.storage.add_message,
+                session_id, "character", "", "", [], character_name=role["name"], blocks=[], interrupted=True,
+                branch_id=branch_id or 0, branch_root=regenerate_from or 0,
+            )
+            ai_id = ai_msg["id"]
+            try:
+                await ws.send_json({"type": "msg_created", "message_id": ai_id})
+            except WebSocketDisconnect:
+                raise
+            if regenerate_from:
+                try:
+                    await ws.send_json({"type": "branch_created", "message": ai_msg, "regenerate_from": regenerate_from})
+                except WebSocketDisconnect:
+                    raise
+            flush_count = 0
+
+            def current_blocks():
+                b = list(blocks)
+                if reasoning_buf:
+                    b.append({"type": "reasoning", "text": reasoning_buf})
+                if text_buf:
+                    b.append({"type": "text", "text": text_buf})
+                return b
+
+            def build_output():
+                return {
+                    "reasoning": reasoning,
+                    "text": reply,
+                    "tool_events": tool_events,
+                    "blocks": current_blocks(),
+                }
+
+            async def persist(interrupted):
+                output = build_output()
+                send_log.record_output(session_id, output)
+                await asyncio.to_thread(
+                    ctx.storage.update_message,
+                    session_id, ai_id, content=output["text"], blocks=output["blocks"], interrupted=interrupted,
+                    reasoning=output["reasoning"],
+                )
+
+            async def finalize(interrupted):
+                output = build_output()
+                await asyncio.to_thread(
+                    ctx.storage.update_message,
+                    session_id, ai_id, content=output["text"], blocks=output["blocks"], interrupted=interrupted,
+                    reasoning=output["reasoning"],
+                )
+                send_log.record_output(session_id, output)
+                return await asyncio.to_thread(ctx.storage.get_message, session_id, ai_id)
+
+            try:
+                async for event in engine.run_messages(system, history, thinking=thinking):
+                    if abort_task.cancelled():
+                        abort_task = asyncio.create_task(abort_watch())
+                    if abort_task.done():
+                        raise asyncio.CancelledError()
+                    kind = event[0]
+                    if kind == "reasoning":
+                        back = event[2] if len(event) > 2 else 0
+                        if back > 0:
+                            reasoning = reasoning[:-back]
+                            reasoning_buf = reasoning_buf[:-back]
+                        reasoning += event[1]
+                        reasoning_buf += event[1]
+                        await ws.send_json({"type": "reasoning", "delta": event[1], "backspace": back})
+                    elif kind == "text":
+                        back = event[2] if len(event) > 2 else 0
+                        if back > 0:
+                            reply = reply[:-back]
+                            text_buf = text_buf[:-back]
+                        reply += event[1]
+                        text_buf += event[1]
+                        await ws.send_json({"type": "text", "delta": event[1], "backspace": back})
+                    elif kind == "tool_call":
+                        await ws.send_json(
+                            {"type": "tool_call", "name": event[1].name, "arguments": event[1].arguments}
+                        )
+                    elif kind == "tool_exec":
+                        if reasoning_buf:
+                            blocks.append({"type": "reasoning", "text": reasoning_buf})
+                            reasoning_buf = ""
+                        if text_buf:
+                            blocks.append({"type": "text", "text": text_buf})
+                            text_buf = ""
+                        await ws.send_json({"type": "tool_exec", "name": event[1]})
+                        tool_events.append({"name": event[1], "arguments": event[2], "result": ""})
+                        blocks.append({"type": "tool", "name": event[1], "arguments": event[2], "result": ""})
+                    elif kind == "tool_result":
+                        for te in tool_events:
+                            if te["name"] == event[1] and not te.get("result"):
+                                te["result"] = event[2]
+                                break
+                        for blk in blocks:
+                            if blk["type"] == "tool" and blk["name"] == event[1] and not blk.get("result"):
+                                blk["result"] = event[2]
+                                break
+                        await ws.send_json({"type": "tool_result", "name": event[1], "text": event[2][:800]})
+                    flush_count += 1
+                    if flush_count % 20 == 0:
+                        await persist(True)
+            except asyncio.CancelledError:
+                output = build_output()
+                await asyncio.to_thread(
+                    ctx.storage.update_message,
+                    session_id, ai_id, content=output["text"], blocks=output["blocks"], interrupted=True,
+                    reasoning=output["reasoning"],
+                )
+                send_log.record_output(session_id, output)
+                ctx.storage.update_session(session_id, workdirs=workdirs)
+                ctx.maybe_auto_title(session_id)
+                abort_task.cancel()
+                try:
+                    await ws.send_json({
+                        "type": "end",
+                        "message": await asyncio.to_thread(ctx.storage.get_message, session_id, ai_id),
+                        "interrupted": True,
+                    })
+                except WebSocketDisconnect:
+                    pass
+                return
+            except ProviderError as e:
+                await persist(True)
+                try:
+                    await ws.send_json({"type": "error", "text": str(e)})
+                except WebSocketDisconnect:
+                    pass
+                ctx.storage.update_session(session_id, workdirs=workdirs)
+                ctx.maybe_auto_title(session_id)
+                abort_task.cancel()
+                return
+            except ApprovalStopped as e:
+                for te in tool_events:
+                    if te["name"] == e.name and not te.get("result"):
+                        te["result"] = REJECT_STOP_TEXT
+                        break
+                for blk in blocks:
+                    if blk["type"] == "tool" and blk["name"] == e.name and not blk.get("result"):
+                        blk["result"] = REJECT_STOP_TEXT
+                        break
+                ctx.storage.update_session(session_id, workdirs=workdirs)
+                saved = await finalize(True)
+                ctx.maybe_auto_title(session_id)
+                abort_task.cancel()
+                try:
+                    await ws.send_json({"type": "end", "message": saved, "interrupted": True})
+                except WebSocketDisconnect:
+                    pass
+                return
+            except WebSocketDisconnect:
+                abort_task.cancel()
+                await persist(True)
+                ctx.storage.update_session(session_id, workdirs=workdirs)
+                ctx.maybe_auto_title(session_id)
+                raise
+            except Exception as e:
+                import traceback
+
+                traceback.print_exc()
+                send_log.record_error(session_id, f"处理出错：{type(e).__name__}: {e}")
+                await persist(True)
+                ctx.storage.update_session(session_id, workdirs=workdirs)
+                ctx.maybe_auto_title(session_id)
+                abort_task.cancel()
+                try:
+                    await ws.send_json({"type": "error", "text": f"处理出错：{type(e).__name__}: {e}"})
+                except WebSocketDisconnect:
+                    pass
+                return
+            saved = await finalize(False)
+            ctx.storage.update_session(session_id, workdirs=workdirs)
+            ctx.maybe_auto_title(session_id, ws)
+            abort_task.cancel()
+            await ws.send_json({"type": "end", "message": saved})
+        finally:
+            await engine.mcp.close()
+            await engine.provider.close()
 
     def session_context(self, session_id: int):
         session = self.storage.get_session(session_id)
@@ -1511,335 +1849,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 if not session_id or (not message and not super_messages):
                     await ws.send_json({"type": "error", "text": "参数不完整"})
                     continue
-                try:
-                    session, role, model_def = ctx.session_context(session_id)
-                except HTTPException as e:
-                    await ws.send_json({"type": "error", "text": e.detail})
-                    continue
-                skill_defs = ctx.resolve_skills(role)
-                search_defs = ctx.resolve_search_skills(role)
-                await ctx.ensure(model_def, skill_defs, search_defs)
-
-                async def abort_watch():
-                    try:
-                        m = await ws.receive_json()
-                    except Exception:
-                        return "disconnect"
-                    return "abort" if m.get("type") == "abort" else "other"
-
-                abort_task = asyncio.create_task(abort_watch())
-
-                async def approval_handler(name: str, arguments: dict, operation: str, diff=None) -> str:
-                    abort_task.cancel()
-                    approval_id = f"ap_{uuid.uuid4().hex[:10]}"
-                    payload = {
-                        "type": "approval",
-                        "approval_id": approval_id,
-                        "name": name,
-                        "arguments": arguments,
-                        "operation": operation,
-                    }
-                    if diff:
-                        payload["diff"] = diff
-                    await ws.send_json(payload)
-                    while True:
-                        resp = await ws.receive_json()
-                        if resp.get("type") == "abort":
-                            return "reject"
-                        if resp.get("type") != "approval_response" or resp.get("approval_id") != approval_id:
-                            continue
-                        decision = resp.get("decision")
-                        if decision in ("allow", "reject", "reject_stop"):
-                            return decision
-
-                workdirs = session.get("workdirs") or []
-                ctx.engine.approval_handler = approval_handler
-                ctx.engine.approval_reject_text = ctx.approval_reject_text()
-                ctx.engine.workdirs = workdirs
-                ctx.engine.temperature = role.get("temperature") if role.get("temperature") is not None else cfg.get("temperature")
-                ctx.engine.max_tokens = role.get("max_tokens") if role.get("max_tokens") is not None else cfg.get("max_tokens")
-                ctx.engine.replace_rules = []
-                if session.get("mode"):
-                    mode = ctx.modes.get(session["mode"])
-                    if mode:
-                        ctx.engine.replace_rules = mode.get("replace_rules") or []
-
-                async def check_cancel() -> bool:
-                    try:
-                        msg = await asyncio.wait_for(ws.receive_json(), timeout=1)
-                    except asyncio.TimeoutError:
-                        return False
-                    except WebSocketDisconnect:
-                        return True
-                    return msg.get("type") == "abort"
-
-                ctx.engine.check_cancel = check_cancel
-                regenerate_from = None
-                if data.get("regenerate_from"):
-                    try:
-                        regenerate_from = int(data.get("regenerate_from"))
-                    except (TypeError, ValueError):
-                        regenerate_from = None
-                    if regenerate_from and not ctx.storage.get_message(session_id, regenerate_from):
-                        regenerate_from = None
-                    if regenerate_from:
-                        target = ctx.storage.get_message(session_id, regenerate_from)
-                        if target and (target["sender"] != "player" or target.get("branch_root")):
-                            for m in reversed(ctx.storage.list_messages(session_id)):
-                                if m["id"] < regenerate_from and m["sender"] == "player" and not m.get("branch_root"):
-                                    regenerate_from = m["id"]
-                                    break
-                branch_choices = {}
-                raw_choices = data.get("branch_choices")
-                if isinstance(raw_choices, dict):
-                    for k, v in raw_choices.items():
-                        try:
-                            branch_choices[int(k)] = int(v)
-                        except (TypeError, ValueError):
-                            continue
-                branch_id = None
-                if not regenerate_from and branch_choices:
-                    branch_msgs = ctx.messages_with_restored(session_id)
-                    branch_roots = sorted({m["branch_root"] for m in branch_msgs if m.get("branch_root")})
-                    if branch_roots:
-                        last_root = branch_roots[-1]
-                        root_branches = sorted({
-                            m["branch_id"] for m in branch_msgs
-                            if m.get("branch_root") == last_root
-                        })
-                        chosen = branch_choices.get(last_root)
-                        if chosen and chosen in root_branches and root_branches and chosen != max(root_branches):
-                            regenerate_from = last_root
-                            branch_id = chosen
-                if branch_id is None:
-                    branch_id = ctx.storage.latest_branch_id(session_id)
-                set_context(
-                    session_id=session_id, role=role["name"], model=model_def.get("model", ""),
-                    purpose="chat", regenerate_from=regenerate_from or 0, branch_id=branch_id or 0,
-                )
-                system = ctx.build_system(session, role, model_def)
-                thinking = build_thinking(
-                    model_def.get("model", ""),
-                    role.get("thinking_mode", ""),
-                    role.get("thinking_custom", ""),
-                )
-                super_messages = data.get("super_messages")
-                use_super = bool(super_messages)
-                history_messages = ctx.messages_with_restored(session_id)
-                if use_super:
-                    system_parts = [m.get("content", "") for m in super_messages if m.get("role") == "system"]
-                    super_system = "\n\n".join(p for p in system_parts if p)
-                    if super_system:
-                        system = super_system
-                    player_rows = [m for m in super_messages if m.get("role") == "user"]
-                    if player_rows:
-                        last_player = player_rows[-1].get("content", "")
-                        if history_messages and history_messages[-1]["sender"] == "player":
-                            ctx.storage.update_message(session_id, history_messages[-1]["id"], content=last_player)
-                        else:
-                            ctx.storage.add_message(session_id, "player", last_player)
-                    history = [
-                        {"role": "user" if m.get("role") == "user" else "assistant", "content": m.get("content", "")}
-                        for m in super_messages
-                        if m.get("role") != "system"
-                    ]
-                else:
-                    if history_messages and history_messages[-1]["sender"] == "player":
-                        recognized_id = await ctx.recognize_message_images(history_messages[-1])
-                        if recognized_id:
-                            updated = ctx.storage.get_message(session_id, recognized_id)
-                            history_messages = ctx.messages_with_restored(session_id)
-                            try:
-                                await ws.send_json({"type": "recognized", "message": updated})
-                            except WebSocketDisconnect:
-                                raise
-                    path = build_latest_path(history_messages, branch_choices)
-                    if regenerate_from:
-                        path = [m for m in path if (m.get("id") or 0) <= regenerate_from]
-                    history = ctx.history_to_openai(path)
-                    ctx.maybe_auto_title(session_id, ws)
-                reasoning = ""
-                reply = ""
-                tool_events = []
-                blocks = []
-                text_buf = ""
-                reasoning_buf = ""
-                if regenerate_from:
-                    has_after = any(m["id"] > regenerate_from for m in ctx.storage.list_messages(session_id))
-                    if has_after:
-                        await asyncio.to_thread(ctx.storage.mark_branch_root, session_id, regenerate_from, branch_id)
-                        branch_id = await asyncio.to_thread(ctx.storage.next_branch_id, session_id)
-                ai_msg = await asyncio.to_thread(
-                    ctx.storage.add_message,
-                    session_id, "character", "", "", [], character_name=role["name"], blocks=[], interrupted=True,
-                    branch_id=branch_id or 0, branch_root=regenerate_from or 0,
-                )
-                ai_id = ai_msg["id"]
-                if regenerate_from:
-                    try:
-                        await ws.send_json({"type": "branch_created", "message": ai_msg, "regenerate_from": regenerate_from})
-                    except WebSocketDisconnect:
-                        raise
-                flush_count = 0
-
-                def current_blocks():
-                    b = list(blocks)
-                    if reasoning_buf:
-                        b.append({"type": "reasoning", "text": reasoning_buf})
-                    if text_buf:
-                        b.append({"type": "text", "text": text_buf})
-                    return b
-
-                def build_output():
-                    return {
-                        "reasoning": reasoning,
-                        "text": reply,
-                        "tool_events": tool_events,
-                        "blocks": current_blocks(),
-                    }
-
-                async def persist(interrupted):
-                    output = build_output()
-                    send_log.record_output(session_id, output)
-                    await asyncio.to_thread(
-                        ctx.storage.update_message,
-                        session_id, ai_id, content=output["text"], blocks=output["blocks"], interrupted=interrupted,
-                        reasoning=output["reasoning"],
-                    )
-
-                async def finalize(interrupted):
-                    output = build_output()
-                    await asyncio.to_thread(
-                        ctx.storage.update_message,
-                        session_id, ai_id, content=output["text"], blocks=output["blocks"], interrupted=interrupted,
-                        reasoning=output["reasoning"],
-                    )
-                    send_log.record_output(session_id, output)
-                    return await asyncio.to_thread(ctx.storage.get_message, session_id, ai_id)
-
-                try:
-                    async for event in ctx.engine.run_messages(system, history, thinking=thinking):
-                        if abort_task.cancelled():
-                            abort_task = asyncio.create_task(abort_watch())
-                        if abort_task.done():
-                            raise asyncio.CancelledError()
-                        kind = event[0]
-                        if kind == "reasoning":
-                            back = event[2] if len(event) > 2 else 0
-                            if back > 0:
-                                reasoning = reasoning[:-back]
-                                reasoning_buf = reasoning_buf[:-back]
-                            reasoning += event[1]
-                            reasoning_buf += event[1]
-                            await ws.send_json({"type": "reasoning", "delta": event[1], "backspace": back})
-                        elif kind == "text":
-                            back = event[2] if len(event) > 2 else 0
-                            if back > 0:
-                                reply = reply[:-back]
-                                text_buf = text_buf[:-back]
-                            reply += event[1]
-                            text_buf += event[1]
-                            await ws.send_json({"type": "text", "delta": event[1], "backspace": back})
-                        elif kind == "tool_call":
-                            await ws.send_json(
-                                {"type": "tool_call", "name": event[1].name, "arguments": event[1].arguments}
-                            )
-                        elif kind == "tool_exec":
-                            if reasoning_buf:
-                                blocks.append({"type": "reasoning", "text": reasoning_buf})
-                                reasoning_buf = ""
-                            if text_buf:
-                                blocks.append({"type": "text", "text": text_buf})
-                                text_buf = ""
-                            await ws.send_json({"type": "tool_exec", "name": event[1]})
-                            tool_events.append({"name": event[1], "arguments": event[2], "result": ""})
-                            blocks.append({"type": "tool", "name": event[1], "arguments": event[2], "result": ""})
-                        elif kind == "tool_result":
-                            for te in tool_events:
-                                if te["name"] == event[1] and not te.get("result"):
-                                    te["result"] = event[2]
-                                    break
-                            for blk in blocks:
-                                if blk["type"] == "tool" and blk["name"] == event[1] and not blk.get("result"):
-                                    blk["result"] = event[2]
-                                    break
-                            await ws.send_json({"type": "tool_result", "name": event[1], "text": event[2][:800]})
-                        flush_count += 1
-                        if flush_count % 20 == 0:
-                            await persist(True)
-                except asyncio.CancelledError:
-                    output = build_output()
-                    await asyncio.to_thread(
-                        ctx.storage.update_message,
-                        session_id, ai_id, content=output["text"], blocks=output["blocks"], interrupted=True,
-                        reasoning=output["reasoning"],
-                    )
-                    send_log.record_output(session_id, output)
-                    ctx.storage.update_session(session_id, workdirs=workdirs)
-                    ctx.maybe_auto_title(session_id)
-                    abort_task.cancel()
-                    try:
-                        await ws.send_json({
-                            "type": "end",
-                            "message": await asyncio.to_thread(ctx.storage.get_message, session_id, ai_id),
-                            "interrupted": True,
-                        })
-                    except WebSocketDisconnect:
-                        pass
-                    continue
-                except ProviderError as e:
-                    await persist(True)
-                    try:
-                        await ws.send_json({"type": "error", "text": str(e)})
-                    except WebSocketDisconnect:
-                        pass
-                    ctx.storage.update_session(session_id, workdirs=workdirs)
-                    ctx.maybe_auto_title(session_id)
-                    abort_task.cancel()
-                    continue
-                except ApprovalStopped as e:
-                    for te in tool_events:
-                        if te["name"] == e.name and not te.get("result"):
-                            te["result"] = REJECT_STOP_TEXT
-                            break
-                    for blk in blocks:
-                        if blk["type"] == "tool" and blk["name"] == e.name and not blk.get("result"):
-                            blk["result"] = REJECT_STOP_TEXT
-                            break
-                    ctx.storage.update_session(session_id, workdirs=workdirs)
-                    saved = await finalize(True)
-                    ctx.maybe_auto_title(session_id)
-                    abort_task.cancel()
-                    try:
-                        await ws.send_json({"type": "end", "message": saved, "interrupted": True})
-                    except WebSocketDisconnect:
-                        pass
-                    continue
-                except WebSocketDisconnect:
-                    abort_task.cancel()
-                    await persist(True)
-                    ctx.storage.update_session(session_id, workdirs=workdirs)
-                    ctx.maybe_auto_title(session_id)
-                    raise
-                except Exception as e:
-                    import traceback
-
-                    traceback.print_exc()
-                    send_log.record_error(session_id, f"处理出错：{type(e).__name__}: {e}")
-                    await persist(True)
-                    ctx.storage.update_session(session_id, workdirs=workdirs)
-                    ctx.maybe_auto_title(session_id)
-                    abort_task.cancel()
-                    try:
-                        await ws.send_json({"type": "error", "text": f"处理出错：{type(e).__name__}: {e}"})
-                    except WebSocketDisconnect:
-                        pass
-                    continue
-                saved = await finalize(False)
-                ctx.storage.update_session(session_id, workdirs=workdirs)
-                ctx.maybe_auto_title(session_id, ws)
-                abort_task.cancel()
-                await ws.send_json({"type": "end", "message": saved})
+                await ctx.process_chat(ws, data, session_id)
         except WebSocketDisconnect:
             pass
 

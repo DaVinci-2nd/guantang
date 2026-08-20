@@ -162,7 +162,15 @@
     const msgs = await api.get(`/api/sessions/${id}/messages`)
     const list = normalizeMessages(msgs)
     const pending = store.streamingMsgs[id]
-    if (pending && pending.streaming) list.push(pending)
+    if (pending && pending.streaming) {
+      if (pending.id) {
+        const idx = list.findIndex((m) => m.id === pending.id)
+        if (idx >= 0) list[idx] = pending
+        else list.push(pending)
+      } else {
+        list.push(pending)
+      }
+    }
     store.messages = list
     await loadBranches()
   }

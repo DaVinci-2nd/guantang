@@ -393,6 +393,12 @@
         store.messages.push(aiMsg)
         store.streamingMsgs[sid] = aiMsg
         store.activeAiMsg = aiMsg
+        if (regenerateFrom) {
+          const ridx = store.messages.findIndex((m) => m.id === regenerateFrom)
+          if (ridx >= 0) {
+            store.messages = store.messages.slice(0, ridx + 1).concat(aiMsg)
+          }
+        }
         scrollBottom(true)
 
         const ws = new WebSocket(`ws://${location.host}/ws/chat`)
@@ -471,7 +477,15 @@
               tb.result = data.text
             }
             scrollBottom()
+          } else if (data.type === 'msg_created') {
+            aiMsg.id = data.message_id
           } else if (data.type === 'branch_created') {
+            if (data.message) {
+              aiMsg.id = data.message.id
+              aiMsg.branch_id = data.message.branch_id
+              aiMsg.branch_root = data.message.branch_root
+              aiMsg.created_at = data.message.created_at
+            }
             try {
               const root = data.regenerate_from
               if (root) {
