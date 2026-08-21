@@ -21,16 +21,19 @@ class MCPManager:
                 continue
             try:
                 await self._connect_one(spec)
-            except Exception as e:
+            except BaseException as e:
                 print(f"[MCP] 技能 {spec.get('name', '?')} 连接失败：{e}")
 
     async def _connect_one(self, spec: dict):
         url = str(spec.get("url") or "").strip()
-        if url:
+        if url.startswith(("http://", "https://")):
             ctx = streamable_http_client(url)
         else:
+            command = str(spec.get("command") or "").strip()
+            if not command:
+                raise ValueError(f"技能 {spec.get('name', '?')} 缺少命令")
             params = StdioServerParameters(
-                command=spec["command"],
+                command=command,
                 args=spec.get("args", []),
                 env=spec.get("env"),
             )
@@ -54,8 +57,11 @@ class MCPManager:
             print(f"[MCP] 技能 {name} 已连接，工具 {len(result.tools)} 个")
             self._entries.append((ctx, session_ctx, session))
         except BaseException:
-            await session_ctx.__aexit__(*sys.exc_info())
-            await ctx.__aexit__(*sys.exc_info())
+            for closer in (session_ctx.__aexit__, ctx.__aexit__):
+                try:
+                    await closer(*sys.exc_info())
+                except BaseException:
+                    pass
             raise
 
     async def call_tool(self, name: str, arguments: dict) -> str:

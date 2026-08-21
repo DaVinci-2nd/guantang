@@ -372,13 +372,17 @@ class AppContext:
     async def build_engine(self, model_def: dict, skill_defs: list[dict], search_defs: list[dict] | None = None) -> Engine:
         mcp = MCPManager()
         await mcp.start(skill_defs or [])
-        api_key = model_def.get("api_key") or self.cfg.api_key("DEEPSEEK_API_KEY")
-        provider = build_provider(
-            model_def,
-            api_key,
-            timeout=self.cfg.get("timeout", 120),
-            max_retries=self.cfg.get("max_retries", 2),
-        )
+        try:
+            api_key = model_def.get("api_key") or self.cfg.api_key("DEEPSEEK_API_KEY")
+            provider = build_provider(
+                model_def,
+                api_key,
+                timeout=self.cfg.get("timeout", 120),
+                max_retries=self.cfg.get("max_retries", 2),
+            )
+        except BaseException:
+            await mcp.close()
+            raise
         translator = ZhTranslator(
             provider,
             str(self.cfg.root / self.cfg.get("zh_cache_file", "data/zh_cache.json")),
@@ -405,7 +409,14 @@ class AppContext:
             return
         skill_defs = ctx.resolve_skills(role)
         search_defs = ctx.resolve_search_skills(role)
-        engine = await ctx.build_engine(model_def, skill_defs, search_defs)
+        try:
+            engine = await ctx.build_engine(model_def, skill_defs, search_defs)
+        except BaseException as e:
+            try:
+                await ws.send_json({"type": "error", "text": f"引擎初始化失败：{e}"})
+            except WebSocketDisconnect:
+                pass
+            return
         try:
             async def abort_watch():
                 try:
