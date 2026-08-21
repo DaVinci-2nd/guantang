@@ -32,7 +32,11 @@
           '</div>'
         )
       }
-      return marked.parse(text || '', { gfm: true, breaks: true, renderer }).replace(/\s+$/, '')
+      const withImages = (text || '').replace(
+        /(?<!\]\()(https?:\/\/[^\s<>()]+\.(?:png|jpe?g|gif|webp)(?:\?[^\s<>()]*)?)/gi,
+        '![]($1)'
+      )
+      return marked.parse(withImages, { gfm: true, breaks: true, renderer }).replace(/\s+$/, '')
     } catch (e) {
       return escapeHtml(text || '').replace(/\n/g, '<br>')
     }
