@@ -301,6 +301,8 @@ class ModelPayload(BaseModel):
     base_url: str = ""
     model: str = ""
     api_key: str = "DEEPSEEK_API_KEY"
+    vision: bool = False
+    detail: str = ""
 
 
 class SessionPayload(BaseModel):
