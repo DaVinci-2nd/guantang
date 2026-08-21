@@ -12,6 +12,7 @@
           name: '', provider: 'openai',
           base_url: 'https://api.openai.com',
           model: '', api_key: '',
+          vision: false, detail: '',
         }
         showKey.value = false
       }

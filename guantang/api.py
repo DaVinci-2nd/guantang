@@ -34,6 +34,18 @@ from .zh_translator import ZhTranslator
 
 REJECT_STOP_TEXT = "此操作已被手动拒绝，对话已中断。"
 
+VISION_KEYWORDS = ("vision", "multimodal")
+DETAIL_LEVELS = ("auto", "low", "high", "original")
+
+
+def _supports_vision(model_def: dict | None) -> bool:
+    if not model_def or not model_def.get("model"):
+        return False
+    if model_def.get("vision"):
+        return True
+    name = str(model_def["model"]).lower()
+    return any(k in name for k in VISION_KEYWORDS)
+
 
 def build_latest_path(messages: list[dict], choices: dict | None = None) -> list[dict]:
     picks = {}
@@ -526,7 +538,7 @@ class AppContext:
                     if m.get("role") != "system"
                 ]
             else:
-                if history_messages and history_messages[-1]["sender"] == "player":
+                if history_messages and history_messages[-1]["sender"] == "player" and not _supports_vision(model_def):
                     recognized_id = await ctx.recognize_message_images(history_messages[-1])
                     if recognized_id:
                         updated = ctx.storage.get_message(session_id, recognized_id)
@@ -538,7 +550,7 @@ class AppContext:
                 path = build_latest_path(history_messages, branch_choices)
                 if regenerate_from:
                     path = [m for m in path if (m.get("id") or 0) <= regenerate_from]
-                history = ctx.history_to_openai(path)
+                history = ctx.history_to_openai(path, model_def)
                 ctx.maybe_auto_title(session_id, ws)
             reasoning = ""
             reply = ""
@@ -761,8 +773,13 @@ class AppContext:
             model_name,
         )
 
-    def build_message_content(self, msg: dict) -> str | list:
+    def build_message_content(self, msg: dict, model_def: dict | None = None) -> str | list:
         text = msg.get("content") or ""
+        detail = None
+        if model_def:
+            d = str(model_def.get("detail") or "").strip().lower()
+            if d in DETAIL_LEVELS:
+                detail = d
         images = []
         for att in msg.get("attachments") or []:
             if att.get("kind") != "image" or att.get("recognized"):
@@ -775,16 +792,19 @@ class AppContext:
                 continue
             mime = mimetypes.guess_type(path.name)[0] or "image/png"
             b64 = base64.b64encode(path.read_bytes()).decode("ascii")
-            images.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
+            block = {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}
+            if detail:
+                block["image_url"]["detail"] = detail
+            images.append(block)
         if not images:
             return text
         return [{"type": "text", "text": text}] + images
 
-    def history_to_openai(self, messages: list[dict]) -> list[dict]:
+    def history_to_openai(self, messages: list[dict], model_def: dict | None = None) -> list[dict]:
         result = []
         for m in messages:
             if m["sender"] == "player":
-                result.append({"role": "user", "content": self.build_message_content(m)})
+                result.append({"role": "user", "content": self.build_message_content(m, model_def)})
                 continue
             content = m.get("content") or ""
             reasoning = m.get("reasoning") or ""

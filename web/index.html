@@ -348,7 +348,7 @@
       <div v-for="m in store.models" :key="m.name" class="card" @click="openEditor(m)">
         <div class="card-head">
           <div class="card-title">
-            <div>{{ m.name }}</div>
+            <div>{{ m.name }}<span v-if="m.vision" class="tag-vision">多模态</span></div>
             <div class="card-sub">{{ m.provider }} · {{ m.model }}</div>
           </div>
         </div>
@@ -377,6 +377,17 @@
               <icon :name="showKey ? 'eye_off' : 'eye'"></icon>
             </button>
           </div>
+        </label>
+        <label class="field switch-field"><span>支持图片（多模态）</span>
+          <input type="checkbox" v-model="editor.vision"/>
+        </label>
+        <label class="field"><span>图片细节</span>
+          <select v-model="editor.detail">
+            <option value="">自动</option>
+            <option value="low">低清晰度（省 token）</option>
+            <option value="high">高清晰度</option>
+            <option value="original">原图</option>
+          </select>
         </label>
       </div>
       <div class="modal-actions">

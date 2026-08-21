@@ -1103,6 +1103,16 @@ body {
   font-size: 11px;
 }
 
+.tag-vision {
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  background: rgba(52, 152, 219, 0.15);
+  color: #3498db;
+  vertical-align: 2px;
+}
+
 .badge { padding: 2px 8px; border-radius: 999px; font-size: 11px; }
 
 .badge.ok { background: rgba(39, 174, 96, 0.15); color: #27ae60; }
@@ -1153,6 +1163,10 @@ body {
 .field { display: flex; flex-direction: column; gap: 6px; }
 
 .field > span { font-size: 12px; color: var(--text-sub); }
+
+.field.switch-field { flex-direction: row; align-items: center; gap: 10px; }
+
+.field.switch-field input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent, #3498db); cursor: pointer; }
 
 .field input[type="text"], .field input:not([type]), .field input[type="number"], .field select, .field textarea {
   padding: 8px 10px;
