@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>灌汤</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23444444' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z'/%3E%3Cpath d='M9 11h6'/%3E%3Cpath d='M9 15h4'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/style.css?v=20260929">
+<link rel="stylesheet" href="/static/style.css?v=20260933">
 </head>
 <body>
 <div id="app"></div>
@@ -449,7 +449,7 @@
       </div>
       <label class="field"><span>触发模式</span>
         <select v-model="store.autoTitle.mode">
-          <option :value="1">首条消息触发（默认）</option>
+          <option :value="1">首条消息触发</option>
           <option :value="2">第一轮结束触发（含中断）</option>
           <option :value="3">指定轮次后触发</option>
         </select>
@@ -483,9 +483,36 @@
         <button class="primary-btn" @click="saveMultimodal"><icon name="check"></icon><span>保存</span></button>
       </div>
     </div>
+    <div class="field card">
+      <span class="rules-title">自动修订</span>
+      <em class="field-hint">对 AI 消息的思考与正文逐段调用修订模型改写，全部完成后预览确认再替换原文</em>
+      <label class="field"><span>修订模型</span>
+        <select v-model="store.revise.model">
+          <option value="">未配置</option>
+          <option v-for="m in store.models" :key="m.name" :value="m.name">{{ m.name }}</option>
+        </select>
+      </label>
+      <div class="field"><span>功能系统提示词</span>
+        <textarea v-model="store.revise.system_prompt" rows="3"></textarea>
+      </div>
+      <div class="field"><span>修订提示词</span>
+        <textarea v-model="store.revise.prompt" rows="3"></textarea>
+      </div>
+      <em class="field-hint">{{output}} 会被替换为待修订内容，{{system}} 会被替换为当前角色系统提示词</em>
+      <label class="field"><span>修订范围</span>
+        <select v-model="store.revise.scope">
+          <option value="all">思考过程和正文</option>
+          <option value="text">仅正文</option>
+          <option value="reasoning">仅思考过程</option>
+        </select>
+      </label>
+      <div class="modal-actions">
+        <button class="primary-btn" @click="saveRevise"><icon name="check"></icon><span>保存</span></button>
+      </div>
+    </div>
     <div class="builtin-tools-title">
       <span class="rules-title">内置工具提示词</span>
-      <em class="field-hint">每个工具单独编辑调用词、用途说明、参数说明与是否审批，保存后立即生效。调用词建议使用英文小写字母与下划线</em>
+      <em class="field-hint">每个工具单独编辑调用词、用途说明、参数说明与是否审批，保存后立即生效</em>
     </div>
     <div class="field card">
       <span class="rules-title">审批拒绝返回提示词</span>
@@ -704,6 +731,9 @@
         <button class="icon-btn small" title="改写" @click="$emit('edit', msg)">
           <icon name="pencil"></icon>
         </button>
+        <button v-if="msg.sender === 'character' && !msg.interrupted" class="icon-btn small" title="自动修订" @click="$emit('revise', msg)">
+          <icon name="revise"></icon>
+        </button>
       </div>
     </div>
   </div>
@@ -771,7 +801,7 @@
       </div>
       <div class="chat-center" :class="{ centered: store.centered }">
         <div class="chat-list" ref="chatList">
-          <message-bubble v-for="m in visibleMessages" :key="m.key" :msg="m" :streaming="m.streaming" @regenerate="regenerate" @edit="openEdit" @preview="openPreview" @approve="onApprove"></message-bubble>
+          <message-bubble v-for="m in visibleMessages" :key="m.key" :msg="m" :streaming="m.streaming" @regenerate="regenerate" @edit="openEdit" @preview="openPreview" @approve="onApprove" @revise="revise"></message-bubble>
         </div>
       </div>
       <div class="chat-input-row">
@@ -1029,6 +1059,30 @@
           <button class="ghost-btn" @click="debugData = null">关闭</button>
         </div>
       </modal>
+      <modal v-if="revisePreview" title="自动修订" @close="closeRevise">
+        <div v-if="revising" class="revise-loading">正在逐段修订，请稍候…</div>
+        <div v-else class="revise-list">
+          <div v-for="(r, i) in reviseResults" :key="i" class="revise-item">
+            <div class="revise-item-head">
+              <span class="tag">{{ r.type === 'reasoning' ? '思考过程' : '正文' }}</span>
+              <span v-if="r.original === r.revised" class="revise-unchanged">无变化</span>
+            </div>
+            <div class="revise-col">
+              <div class="revise-label">原文</div>
+              <div class="revise-text" v-html="renderMarkdown(r.original)"></div>
+            </div>
+            <div class="revise-col">
+              <div class="revise-label">修订后</div>
+              <div class="revise-text" v-html="renderMarkdown(r.revised)"></div>
+            </div>
+          </div>
+          <div v-if="!reviseResults.length" class="empty-block">没有可修订的内容</div>
+        </div>
+        <div class="modal-actions">
+          <button class="primary-btn" :disabled="revising" @click="applyRevise"><icon name="check"></icon><span>确认替换</span></button>
+          <button class="ghost-btn" :disabled="revising" @click="closeRevise">取消</button>
+        </div>
+      </modal>
     </template>
   </div>
 </template>
@@ -1036,16 +1090,16 @@
 <script src="https://unpkg.com/vue@3.4.38/dist/vue.global.prod.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
 <script src="https://unpkg.com/@highlightjs/cdn-assets@11.11.1/highlight.min.js"></script>
-<script src="/static/icons.js?v=20260929"></script>
-<script src="/static/api.js?v=20260929"></script>
-<script src="/static/store.js?v=20260929"></script>
-<script src="/static/views/common.js?v=20260929"></script>
-<script src="/static/views/chat.js?v=20260929"></script>
-<script src="/static/views/roles.js?v=20260929"></script>
-<script src="/static/views/skills.js?v=20260929"></script>
-<script src="/static/views/modes.js?v=20260929"></script>
-<script src="/static/views/models.js?v=20260929"></script>
-<script src="/static/views/settings.js?v=20260929"></script>
-<script src="/static/app.js?v=20260929"></script>
+<script src="/static/icons.js?v=20260933"></script>
+<script src="/static/api.js?v=20260933"></script>
+<script src="/static/store.js?v=20260933"></script>
+<script src="/static/views/common.js?v=20260933"></script>
+<script src="/static/views/chat.js?v=20260933"></script>
+<script src="/static/views/roles.js?v=20260933"></script>
+<script src="/static/views/skills.js?v=20260933"></script>
+<script src="/static/views/modes.js?v=20260933"></script>
+<script src="/static/views/models.js?v=20260933"></script>
+<script src="/static/views/settings.js?v=20260933"></script>
+<script src="/static/app.js?v=20260933"></script>
 </body>
 </html>

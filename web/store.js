@@ -1,6 +1,16 @@
 (function () {
   const { reactive } = Vue
 
+  const DEFAULT_REVISE_SYSTEM = '根据给出的系统提示词，修订给出的一段或多段输出文本，使其实质内容不变的前提下符合系统提示词；只输出修改后的内容。'
+  const DEFAULT_REVISE_PROMPT = '输出内容：{{output}}；系统提示词：{{system}}'
+
+  const defaultRevise = () => ({
+    model: '',
+    system_prompt: DEFAULT_REVISE_SYSTEM,
+    prompt: DEFAULT_REVISE_PROMPT,
+    scope: 'all',
+  })
+
   const store = reactive({
     page: 'chat',
     theme: 'dark',
@@ -22,6 +32,7 @@
     player: { name: '', avatar: '' },
     multimodal: { enabled: false, model: '', prompt: '' },
     autoTitle: { enabled: false, model: '', prompt: '', mode: 1, rounds: 3 },
+    revise: defaultRevise(),
     searchToolPrompt: '',
     streaming: false,
     ws: null,
@@ -66,6 +77,7 @@
     store.player = data.player
     store.multimodal = data.multimodal || { enabled: false, model: '', prompt: '' }
     store.autoTitle = data.auto_title || { enabled: false, model: '', prompt: '', mode: 1, rounds: 3 }
+    store.revise = data.revise || defaultRevise()
     store.searchToolPrompt = data.search_tool_prompt || ''
     store.theme = data.ui.theme
     store.leftOpen = data.ui.sidebar_left

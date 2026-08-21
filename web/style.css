@@ -1113,6 +1113,24 @@ body {
   vertical-align: 2px;
 }
 
+.revise-loading { padding: 20px; text-align: center; color: var(--text-sub); }
+
+.revise-list { display: flex; flex-direction: column; gap: 14px; max-height: 60vh; overflow-y: auto; }
+
+.revise-item { border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
+
+.revise-item-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+
+.revise-unchanged { font-size: 11px; color: var(--text-sub); }
+
+.revise-col { margin-bottom: 8px; }
+
+.revise-col:last-child { margin-bottom: 0; }
+
+.revise-label { font-size: 11px; color: var(--text-sub); margin-bottom: 4px; }
+
+.revise-text { font-size: 13px; line-height: 1.6; word-break: break-word; }
+
 .badge { padding: 2px 8px; border-radius: 999px; font-size: 11px; }
 
 .badge.ok { background: rgba(39, 174, 96, 0.15); color: #27ae60; }

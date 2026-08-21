@@ -322,6 +322,7 @@ class ConfigPayload(BaseModel):
     ui: dict | None = None
     multimodal: dict | None = None
     auto_title: dict | None = None
+    revise: dict | None = None
     search_tool_prompt: str | None = None
 
 
@@ -1086,6 +1087,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             "ui": cfg.ui(),
             "multimodal": cfg.multimodal(),
             "auto_title": cfg.auto_title(),
+            "revise": cfg.revise(),
             "search_tool_prompt": cfg.get("search_tool_prompt", "") or "",
         }
 
@@ -1568,6 +1570,74 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             raise HTTPException(404, "消息不存在")
         return msg
 
+    @app.post("/api/sessions/{session_id}/messages/{message_id}/revise")
+    async def revise_message(session_id: int, message_id: int):
+        session, role, model_def = ctx.session_context(session_id)
+        msg = ctx.storage.get_message(session_id, message_id)
+        if not msg or msg["sender"] != "character":
+            raise HTTPException(404, "消息不存在")
+        rv = cfg.revise()
+        if not rv.get("model"):
+            raise HTTPException(400, "未配置修订模型")
+        revise_model = ctx.models.get(rv["model"])
+        if not revise_model:
+            raise HTTPException(400, "修订模型不存在")
+        scope = rv.get("scope", "all")
+        if scope not in ("all", "text", "reasoning"):
+            scope = "all"
+        blocks = msg.get("blocks") or []
+        targets = []
+        for i, b in enumerate(blocks):
+            if b.get("type") not in ("reasoning", "text"):
+                continue
+            if scope == "text" and b.get("type") != "text":
+                continue
+            if scope == "reasoning" and b.get("type") != "reasoning":
+                continue
+            targets.append((i, b))
+        if not targets:
+            raise HTTPException(400, "该消息没有可修订的思考或正文")
+        system = ctx.build_system(session, role, model_def)
+        system_prompt = rv["system_prompt"]
+        prompt_template = rv["prompt"]
+        set_context(session_id=session_id, role=role["name"], model=revise_model.get("model", ""), purpose="revise")
+        provider = build_provider(
+            revise_model,
+            (revise_model.get("api_key") or cfg.api_key("DEEPSEEK_API_KEY")),
+            timeout=cfg.get("timeout", 120),
+            max_retries=cfg.get("max_retries", 2),
+        )
+        try:
+            results = []
+            for i, b in targets:
+                current = ctx.storage.get_message(session_id, message_id)
+                if not current:
+                    raise HTTPException(404, "修订过程中消息已被删除，已停止修订")
+                text = ""
+                async for event in provider.stream_chat(
+                    [
+                        {"role": "system", "content": system_prompt},
+                        {
+                            "role": "user",
+                            "content": prompt_template.replace("{{output}}", b.get("text") or "").replace("{{system}}", system),
+                        },
+                    ]
+                ):
+                    if event[0] == "text":
+                        text += event[1]
+                revised = text.strip()
+                results.append({
+                    "index": i,
+                    "type": b.get("type"),
+                    "original": b.get("text") or "",
+                    "revised": revised,
+                })
+            return {"results": results}
+        except ProviderError as e:
+            raise HTTPException(400, f"修订失败：{e}")
+        finally:
+            await provider.close()
+
     @app.get("/api/sessions/{session_id}/submit-context")
     async def submit_context(session_id: int, message: str = ""):
         if not ctx.storage.get_session(session_id):
@@ -1715,7 +1785,13 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     @app.get("/api/config")
     async def get_config():
-        return {"player": cfg.player(), "ui": cfg.ui(), "multimodal": cfg.multimodal(), "auto_title": cfg.auto_title()}
+        return {
+            "player": cfg.player(),
+            "ui": cfg.ui(),
+            "multimodal": cfg.multimodal(),
+            "auto_title": cfg.auto_title(),
+            "revise": cfg.revise(),
+        }
 
     @app.put("/api/config")
     async def update_config(payload: ConfigPayload):
@@ -1742,10 +1818,23 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 mode=payload.auto_title.get("mode"),
                 rounds=payload.auto_title.get("rounds"),
             )
+        if payload.revise is not None:
+            cfg.set_revise(
+                model=payload.revise.get("model"),
+                system_prompt=payload.revise.get("system_prompt"),
+                prompt=payload.revise.get("prompt"),
+                scope=payload.revise.get("scope"),
+            )
         if payload.search_tool_prompt is not None:
             cfg.data["search_tool_prompt"] = payload.search_tool_prompt
         cfg.save()
-        return {"player": cfg.player(), "ui": cfg.ui(), "multimodal": cfg.multimodal(), "auto_title": cfg.auto_title()}
+        return {
+            "player": cfg.player(),
+            "ui": cfg.ui(),
+            "multimodal": cfg.multimodal(),
+            "auto_title": cfg.auto_title(),
+            "revise": cfg.revise(),
+        }
 
     @app.get("/api/settings/export")
     async def export_settings():

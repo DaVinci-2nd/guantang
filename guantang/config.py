@@ -109,3 +109,23 @@ class Config:
             a["mode"] = mode
         if rounds is not None:
             a["rounds"] = rounds
+
+    def revise(self) -> dict:
+        r = self.data.get("revise") or {}
+        return {
+            "model": r.get("model", ""),
+            "system_prompt": r.get("system_prompt", ""),
+            "prompt": r.get("prompt", ""),
+            "scope": r.get("scope", "all"),
+        }
+
+    def set_revise(self, model=None, system_prompt=None, prompt=None, scope=None):
+        r = self.data.setdefault("revise", {})
+        if model is not None:
+            r["model"] = model
+        if system_prompt is not None:
+            r["system_prompt"] = system_prompt
+        if prompt is not None:
+            r["prompt"] = prompt
+        if scope is not None:
+            r["scope"] = scope

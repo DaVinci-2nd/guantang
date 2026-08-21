@@ -22,6 +22,10 @@
       const workdirModal = ref(false)
       const workdirList = ref([])
       const workdirInput = ref('')
+      const revisePreview = ref(false)
+      const revising = ref(false)
+      const reviseResults = ref([])
+      const reviseMsg = ref(null)
 
       const visibleMessages = computed(() => store.computeVisibleMessages())
 
@@ -673,6 +677,59 @@
         editBlocks.value = null
       }
 
+      async function revise(msg) {
+        const sid = store.currentSessionId
+        if (!sid || revising.value) return
+        revising.value = true
+        reviseResults.value = []
+        reviseMsg.value = msg
+        revisePreview.value = true
+        try {
+          const data = await api.post(`/api/sessions/${sid}/messages/${msg.id}/revise`)
+          reviseResults.value = data.results || []
+        } catch (e) {
+          revisePreview.value = false
+          reviseMsg.value = null
+          store.notify(e.message)
+        } finally {
+          revising.value = false
+        }
+      }
+
+      function closeRevise() {
+        if (revising.value) return
+        revisePreview.value = false
+        reviseMsg.value = null
+        reviseResults.value = []
+      }
+
+      async function applyRevise() {
+        const msg = reviseMsg.value
+        const sid = store.currentSessionId
+        if (!msg || !sid || revising.value) return
+        const byIndex = {}
+        reviseResults.value.forEach((r) => { byIndex[r.index] = r })
+        const blocks = (msg.blocks || []).map((b, i) => {
+          const c = { ...b }
+          delete c.open
+          if (byIndex[i] && byIndex[i].revised) c.text = byIndex[i].revised
+          return c
+        })
+        const content = blocks.filter((b) => b.type === 'text').map((b) => b.text || '').join('')
+        try {
+          const updated = await api.put(`/api/sessions/${sid}/messages/${msg.id}`, { blocks, content })
+          msg.blocks = updated.blocks || []
+          msg.content = updated.content || ''
+          store.notify('已替换为修订内容', 'ok')
+        } catch (e) {
+          store.notify(e.message)
+          return
+        }
+        revisePreview.value = false
+        reviseMsg.value = null
+        reviseResults.value = []
+      }
+
       function blockTypeName(type) {
         if (type === 'reasoning') return '思考'
         if (type === 'tool') return '工具调用'
@@ -862,6 +919,7 @@
         blockTypeName, moveBlock, onApprove,
         debugData, showDebug, debugJson, previewTarget, openPreview,
         workdirModal, workdirList, workdirInput, openWorkdirModal, addWorkdir, removeWorkdir,
+        revisePreview, revising, reviseResults, revise, applyRevise, closeRevise,
         selectedBranch, selectBranch, branchLabel, branchSummary, isSelectedBranch, branchMsgKind,
         onEditorKeydown, onEditorPaste, onEditorInput: markDirty,
         superData, superSend, addSuperRow, removeSuperRow, superRoleName, submitSuper, onSendClick,
